@@ -3,11 +3,11 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>motion</title>
+  <title>React Marching Cubes</title>
   <script src="https://cdn.tailwindcss.com"></script>
   <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
   <style>
-    body { margin: 0; overflow: hidden; background-color: #050505; color: white; font-family: system-ui, -apple-system, sans-serif; }
+    body { margin: 0; overflow: hidden; background-color: #000; color: #e2e8f0; font-family: system-ui, sans-serif; }
     canvas { display: block; }
     .scrollbar-hide::-webkit-scrollbar { display: none; }
     .scrollbar-hide { -ms-overflow-style: none; scrollbar-width: none; }
@@ -42,129 +42,106 @@
     import { UnrealBloomPass } from 'three/examples/jsm/postprocessing/UnrealBloomPass';
     import { BokehPass } from 'three/examples/jsm/postprocessing/BokehPass';
     import { SSAOPass } from 'three/examples/jsm/postprocessing/SSAOPass';
+    import { GTAOPass } from 'three/examples/jsm/postprocessing/GTAOPass';
+    import { RectAreaLightUniformsLib } from 'three/examples/jsm/lights/RectAreaLightUniformsLib.js';
+    import { RectAreaLightHelper } from 'three/examples/jsm/helpers/RectAreaLightHelper.js';
 
     const DEFAULT_CONFIG = {
-      speed: 0.5,
-      numBlobs: 30,
-      resolution: 60,
-      isolation: 35,
-      floor: false,
-      wallX: false,
-      wallZ: false,
-      color: '#FFFFFF',
-      ambientLightBrightness: 60,
-      materialType: 'striped',
-      bloomStrength: 0.2,
-      bloomRadius: 0.5,
-      bloomThreshold: 0.9,
-      focus: 1980.0,
-      aperture: 0.00001,
-      maxBlur: 0.01,
-      enableSSAO: false,
-      ssaoRadius: 16,
-      ssaoMinDist: 0.005,
-      ssaoMaxDist: 0.1,
-      enableDoF: false,
-      enableRGB: false,
-      slicedMode: false,
-      enableFeedback: false,
+      speed: 0.5, numBlobs: 32, resolution: 60, isolation: 35,
+      floor: false, wallX: false, wallZ: false,
+      color: '#ffffff', ambientLightBrightness: 80, materialType: 'plaster',
+      bloomStrength: 0.2, bloomRadius: 0.5, bloomThreshold: 0.9,
+      focus: 1980.0, aperture: 0.00001, maxBlur: 0.01,
+      enableSSAO: false, ssaoRadius: 16, ssaoMinDist: 0.005, ssaoMaxDist: 0.1,
+      enableDoF: true, enableRGB: true, slicedMode: true,
+      enableVolumeLights: true, enableFog: true,
     };
 
     const ControlPanel = ({ config, setConfig }) => {
-      const handleChange = (key, value) => {
-        setConfig(prev => {
-          const newConfig = { ...prev, [key]: value };
-          if (key === 'slicedMode' && value === true) newConfig.materialType = 'striped';
-          if (key === 'enableDoF' && value === true) newConfig.enableFeedback = false;
-          if (key === 'materialType' && value === 'water') {
-            newConfig.enableDoF = true;
-            newConfig.enableRGB = true;
-            newConfig.enableFeedback = false;
-          }
-          return newConfig;
-        });
-      };
-
+      const update = (k, v) => setConfig(p => ({ ...p, [k]: v }));
       return (
-        <div className="absolute top-4 left-4 w-80 bg-black/80 backdrop-blur-md border border-white/10 rounded-xl p-5 shadow-2xl text-sm z-50 max-h-[90vh] overflow-y-auto transition-opacity duration-300 opacity-0 hover:opacity-100 font-sans scrollbar-hide">
-          <div className="flex items-center justify-between mb-6">
-            <div className="flex items-center gap-2 text-indigo-400">
-              <Settings2 size={20} />
-              <h2 className="font-bold text-lg uppercase tracking-wider">Controls</h2>
-            </div>
-            <button onClick={() => setConfig(DEFAULT_CONFIG)} className="p-1.5 hover:bg-white/10 rounded-full transition-colors text-white/50 hover:text-white" title="Reset">
-              <RotateCcw size={16} />
-            </button>
+        <div className="absolute top-4 left-4 w-80 bg-white/90 backdrop-blur-md border border-slate-200 rounded-xl p-5 shadow-2xl text-sm z-50 max-h-[90vh] overflow-y-auto opacity-0 hover:opacity-100 transition-opacity duration-300 scrollbar-hide text-slate-800">
+          <div className="flex justify-between mb-6 text-indigo-600">
+            <div className="flex gap-2"><Settings2 size={20} /><h2 className="font-bold tracking-wider">Controls</h2></div>
+            <button onClick={() => setConfig(DEFAULT_CONFIG)} className="p-1 hover:bg-slate-100 rounded-full text-slate-400 hover:text-slate-700"><RotateCcw size={16} /></button>
           </div>
+          
           <div className="space-y-5">
             <div className="space-y-2">
-                <label className="text-xs font-semibold text-white/60 uppercase">Material</label>
-                <div className="flex gap-2">
-                    <button onClick={() => handleChange('materialType', 'striped')} className={`flex-1 py-2 rounded-lg border text-xs font-semibold transition-colors ${config.materialType === 'striped' ? 'bg-indigo-600 border-indigo-500 text-white' : 'bg-white/5 border-white/10 text-white/60 hover:bg-white/10'}`}>Striped</button>
-                    <button onClick={() => handleChange('materialType', 'water')} className={`flex-1 py-2 rounded-lg border text-xs font-semibold transition-colors ${config.materialType === 'water' ? 'bg-indigo-600 border-indigo-500 text-white' : 'bg-white/5 border-white/10 text-white/60 hover:bg-white/10'}`}>Water</button>
-                </div>
-            </div>
-            <div className="space-y-2">
-                <label className="text-xs font-semibold text-white/60 uppercase">Base Color</label>
-                <div className="flex items-center gap-3 bg-white/5 p-2 rounded-lg border border-white/10">
-                <input type="color" value={config.color} onChange={(e) => handleChange('color', e.target.value)} className="w-8 h-8 rounded cursor-pointer bg-transparent border-none p-0" />
-                <span className="font-mono text-white/80">{config.color}</span>
-                </div>
-            </div>
-            <hr className="border-white/10" />
-            <div className="space-y-2">
-              <label className="text-xs font-semibold text-white/60 uppercase">Styles & Effects</label>
-              <div className="space-y-2 pt-1">
-                 <label className="flex items-center gap-3 cursor-pointer group">
-                  <input type="checkbox" checked={config.slicedMode} onChange={(e) => handleChange('slicedMode', e.target.checked)} className="appearance-none w-4 h-4 rounded border border-white/20 bg-white/5 checked:bg-indigo-500 checked:border-indigo-500 transition-colors" />
-                  <span className="text-white/80 group-hover:text-white transition-colors">Sliced Mode</span>
-                </label>
-                <label className="flex items-center gap-3 cursor-pointer group">
-                  <input type="checkbox" checked={config.enableFeedback} onChange={(e) => handleChange('enableFeedback', e.target.checked)} className="appearance-none w-4 h-4 rounded border border-white/20 bg-white/5 checked:bg-indigo-500 checked:border-indigo-500 transition-colors" disabled={config.enableDoF} />
-                  <span className={`text-white/80 transition-colors ${config.enableDoF ? 'opacity-50 cursor-not-allowed' : 'group-hover:text-white'}`}>Feedback Trail</span>
-                </label>
+              <label className="text-xs font-semibold text-slate-500 uppercase">Material</label>
+              <div className="flex gap-2">
+                {['striped', 'water', 'plaster'].map(type => (
+                  <button key={type} onClick={() => update('materialType', type)} 
+                    className={`flex-1 py-2 rounded-lg border text-xs font-bold capitalize transition-colors ${config.materialType === type ? 'bg-indigo-600 border-indigo-500 text-white' : 'bg-slate-100 border-slate-200 text-slate-500 hover:bg-slate-200'}`}>
+                    {type}
+                  </button>
+                ))}
               </div>
             </div>
-            <hr className="border-white/10" />
+
             <div className="space-y-2">
-              <div className="flex items-center justify-between">
-                  <label className="text-xs font-semibold text-white/60 uppercase">Ambient Occlusion (SSGI)</label>
-                  <input type="checkbox" checked={config.enableSSAO} onChange={(e) => handleChange('enableSSAO', e.target.checked)} className="appearance-none w-4 h-4 rounded border border-white/20 bg-white/5 checked:bg-indigo-500 checked:border-indigo-500 transition-colors cursor-pointer" />
+              <label className="text-xs font-semibold text-slate-500 uppercase">Base Color</label>
+              <div className="flex items-center gap-3 bg-slate-100 p-2 rounded-lg border border-slate-200">
+                <input type="color" value={config.color} onChange={(e) => update('color', e.target.value)} className="w-8 h-8 cursor-pointer bg-transparent border-none p-0" />
+                <span className="font-mono text-slate-600">{config.color}</span>
+              </div>
+            </div>
+
+            <hr className="border-slate-200" />
+            
+            <div className="space-y-2">
+              <label className="text-xs font-semibold text-slate-500 uppercase">Effects</label>
+              <label className="flex items-center gap-3 cursor-pointer group pt-1">
+                <input type="checkbox" checked={config.slicedMode} onChange={(e) => update('slicedMode', e.target.checked)} className="accent-indigo-500" />
+                <span className="text-slate-700">Sliced Mode</span>
+              </label>
+              <label className="flex items-center gap-3 cursor-pointer group pt-1">
+                <input type="checkbox" checked={config.enableVolumeLights} onChange={(e) => update('enableVolumeLights', e.target.checked)} className="accent-indigo-500" />
+                <span className="text-slate-700">Volume Lights</span>
+              </label>
+               <label className="flex items-center gap-3 cursor-pointer group pt-1">
+                <input type="checkbox" checked={config.enableFog} onChange={(e) => update('enableFog', e.target.checked)} className="accent-indigo-500" />
+                <span className="text-slate-700">Fog</span>
+              </label>
+            </div>
+
+            <hr className="border-slate-200" />
+
+            <div className="space-y-2">
+              <div className="flex justify-between">
+                <label className="text-xs font-semibold text-slate-500 uppercase">Ambient Occlusion</label>
+                <input type="checkbox" checked={config.enableSSAO} onChange={(e) => update('enableSSAO', e.target.checked)} className="accent-indigo-500" />
               </div>
               {config.enableSSAO && (
-                <div className="pl-2 border-l-2 border-indigo-500/20 space-y-3 mt-2">
-                    <div className="space-y-1">
-                        <div className="flex justify-between"><label className="text-[10px] text-white/50">Radius</label><span className="text-[10px] font-mono text-indigo-400">{config.ssaoRadius}</span></div>
-                        <input type="range" min="1" max="32" step="1" value={config.ssaoRadius} onChange={(e) => handleChange('ssaoRadius', parseFloat(e.target.value))} className="w-full accent-indigo-500 h-1 bg-white/10 rounded-lg appearance-none cursor-pointer" />
-                    </div>
+                <div className="pl-2 border-l-2 border-indigo-100 mt-2">
+                   <div className="flex justify-between text-[10px] text-slate-400"><span>Radius</span><span className="font-mono text-indigo-500">{config.ssaoRadius}</span></div>
+                   <input type="range" min="1" max="32" value={config.ssaoRadius} onChange={(e) => update('ssaoRadius', +e.target.value)} className="w-full accent-indigo-500 h-1 bg-slate-200 rounded-lg appearance-none" />
                 </div>
               )}
             </div>
-            <hr className="border-white/10" />
+
+            <hr className="border-slate-200" />
+
             <div className="space-y-2">
-              <label className="text-xs font-semibold text-white/60 uppercase">Post Processing</label>
-              <div className="space-y-2 pt-1">
-                <label className="flex items-center gap-3 cursor-pointer group">
-                  <input type="checkbox" checked={config.enableDoF} onChange={(e) => handleChange('enableDoF', e.target.checked)} className="appearance-none w-4 h-4 rounded border border-white/20 bg-white/5 checked:bg-indigo-500 checked:border-indigo-500 transition-colors" />
-                  <span className="text-white/80 group-hover:text-white transition-colors">Depth of Field <span className="text-white/40 text-[10px] ml-1">(disables feedback)</span></span>
-                </label>
-                <label className="flex items-center gap-3 cursor-pointer group">
-                  <input type="checkbox" checked={config.enableRGB} onChange={(e) => handleChange('enableRGB', e.target.checked)} className="appearance-none w-4 h-4 rounded border border-white/20 bg-white/5 checked:bg-indigo-500 checked:border-indigo-500 transition-colors" />
-                  <span className="text-white/80 group-hover:text-white transition-colors">RGB Shift</span>
-                </label>
+              <label className="text-xs font-semibold text-slate-500 uppercase">Post Processing</label>
+              <div className="space-y-1">
+                <label className="flex items-center gap-3 cursor-pointer"><input type="checkbox" checked={config.enableDoF} onChange={(e) => update('enableDoF', e.target.checked)} className="accent-indigo-500" /><span className="text-slate-700">Depth of Field</span></label>
+                <label className="flex items-center gap-3 cursor-pointer"><input type="checkbox" checked={config.enableRGB} onChange={(e) => update('enableRGB', e.target.checked)} className="accent-indigo-500" /><span className="text-slate-700">RGB Shift</span></label>
               </div>
             </div>
-            <hr className="border-white/10" />
-            <div className="space-y-4">
-              <div className="space-y-1">
-                <div className="flex justify-between"><label className="text-xs font-semibold text-white/60">Speed</label><span className="text-xs font-mono text-indigo-400">{config.speed.toFixed(1)}x</span></div>
-                <input type="range" min="0" max="5" step="0.1" value={config.speed} onChange={(e) => handleChange('speed', parseFloat(e.target.value))} className="w-full accent-indigo-500 h-1 bg-white/10 rounded-lg appearance-none cursor-pointer" />
-              </div>
-              <div className="space-y-1">
-                 <div className="flex justify-between"><label className="text-xs font-semibold text-white/60">Resolution</label><span className="text-xs font-mono text-indigo-400">{config.resolution}</span></div>
-                <input type="range" min="10" max="100" step="1" value={config.resolution} onChange={(e) => handleChange('resolution', parseInt(e.target.value))} className="w-full accent-indigo-500 h-1 bg-white/10 rounded-lg appearance-none cursor-pointer" />
-                <p className="text-[10px] text-white/30 pt-1">Higher resolution impacts performance.</p>
-              </div>
+
+            <hr className="border-slate-200" />
+
+            <div className="space-y-3">
+              {[
+                { label: 'Speed', key: 'speed', min: 0, max: 5, step: 0.1, fmt: v => v.toFixed(1) + 'x' },
+                { label: 'Resolution', key: 'resolution', min: 10, max: 100, step: 1, fmt: v => v }
+              ].map(ctrl => (
+                <div key={ctrl.key} className="space-y-1">
+                  <div className="flex justify-between text-xs font-semibold text-slate-500"><span>{ctrl.label}</span><span className="font-mono text-indigo-500">{ctrl.fmt(config[ctrl.key])}</span></div>
+                  <input type="range" min={ctrl.min} max={ctrl.max} step={ctrl.step} value={config[ctrl.key]} onChange={(e) => update(ctrl.key, +e.target.value)} className="w-full accent-indigo-500 h-1 bg-slate-200 rounded-lg appearance-none" />
+                </div>
+              ))}
             </div>
           </div>
         </div>
@@ -173,301 +150,346 @@
 
     const ThreeScene = ({ config }) => {
       const containerRef = useRef(null);
-      const feedbackCanvasRef = useRef(null);
-      const rendererRef = useRef(null);
-      const sceneRef = useRef(null);
-      const cameraRef = useRef(null);
-      const effectRef = useRef(null);
-      const controlsRef = useRef(null);
-      const animationIdRef = useRef(null);
-      const timeRef = useRef(0);
-      const composerRef = useRef(null);
-      const bloomPassRef = useRef(null);
-      const bokehPassRef = useRef(null);
-      const rgbPassRef = useRef(null);
-      const ssaoPassRef = useRef(null);
-      const ambientLightRef = useRef(null);
+      const ctx = useRef({}); // Context to store refs
 
+      // Initialize Scene
       useEffect(() => {
         if (!containerRef.current) return;
-        const width = window.innerWidth;
-        const height = window.innerHeight;
+        
+        // Init RectAreaLight Uniforms
+        RectAreaLightUniformsLib.init();
+
+        const width = window.innerWidth, height = window.innerHeight;
+        
         const renderer = new THREE.WebGLRenderer({ antialias: false, alpha: true, preserveDrawingBuffer: true });
         renderer.setPixelRatio(window.devicePixelRatio);
         renderer.setSize(width, height);
         renderer.shadowMap.enabled = true;
         renderer.shadowMap.type = THREE.PCFSoftShadowMap;
         renderer.toneMapping = THREE.ACESFilmicToneMapping;
-        renderer.toneMappingExposure = 1.0;
-        renderer.setClearColor(0x020202, 1);
+        renderer.setClearColor(0x000000, 0);
         containerRef.current.appendChild(renderer.domElement);
-        rendererRef.current = renderer;
 
         const scene = new THREE.Scene();
-        scene.background = new THREE.Color(0x020202);
-        const pmremGenerator = new THREE.PMREMGenerator(renderer);
-        scene.environment = pmremGenerator.fromScene(new RoomEnvironment(), 0.04).texture;
-        pmremGenerator.dispose();
-        sceneRef.current = scene;
+        const pmrem = new THREE.PMREMGenerator(renderer);
+        const roomEnv = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
+        scene.environment = roomEnv;
+        pmrem.dispose();
 
         const camera = new THREE.PerspectiveCamera(50, width / height, 1, 50000);
-        camera.position.set(0, 0, 2000); 
-        cameraRef.current = camera;
+        camera.position.set(0, 0, 2400);
 
         const controls = new OrbitControls(camera, renderer.domElement);
-        controls.minDistance = 200;
-        controls.maxDistance = 4000;
-        controls.enableDamping = true;
-        controlsRef.current = controls;
+        controls.minDistance = 200; controls.maxDistance = 4000; controls.enableDamping = true;
 
-        const overheadLight = new THREE.DirectionalLight(0xffffff, 0.5); 
-        overheadLight.position.set(0, 2000, 0);
-        overheadLight.castShadow = true;
-        overheadLight.shadow.mapSize.width = 2048;
-        overheadLight.shadow.mapSize.height = 2048;
-        overheadLight.shadow.camera.near = 0.5;
-        overheadLight.shadow.camera.far = 5000;
-        overheadLight.shadow.camera.left = -1000;
-        overheadLight.shadow.camera.right = 1000;
-        overheadLight.shadow.camera.top = 1000;
-        overheadLight.shadow.camera.bottom = -1000;
-        overheadLight.shadow.bias = -0.0001;
-        scene.add(overheadLight);
+        const dirLight = new THREE.DirectionalLight(0xffffff, 0.5);
+        dirLight.position.set(0, 2000, 0);
+        dirLight.castShadow = true;
+        Object.assign(dirLight.shadow.camera, { near: 0.5, far: 5000, left: -1000, right: 1000, top: 1000, bottom: -1000 });
+        dirLight.shadow.mapSize.set(2048, 2048);
+        scene.add(dirLight);
+
+        const ambLight = new THREE.AmbientLight(0xffffff, 0.2);
+        scene.add(ambLight);
         
-        const ambientLight = new THREE.AmbientLight(0xffffff, 0.2);
-        scene.add(ambientLight);
-        ambientLightRef.current = ambientLight;
+        const hemiLight = new THREE.HemisphereLight(0xffffff, 0x444444, 0.0);
+        hemiLight.position.set(0, 2000, 0);
+        scene.add(hemiLight);
 
-        const renderTarget = new THREE.WebGLRenderTarget(width, height, {
-            type: THREE.HalfFloatType,
-            format: THREE.RGBAFormat,
-            depthTexture: new THREE.DepthTexture(width, height),
-            depthBuffer: true,
-            samples: 4
-        });
+        // Volume Lights Group
+        const volGroup = new THREE.Group();
+        scene.add(volGroup);
 
-        const composer = new EffectComposer(renderer, renderTarget);
+        // Post-processing
+        const target = new THREE.WebGLRenderTarget(width, height, { type: THREE.HalfFloatType, depthTexture: new THREE.DepthTexture(width, height), samples: 4 });
+        const composer = new EffectComposer(renderer, target);
+        
         const renderPass = new RenderPass(scene, camera);
+        renderPass.clearColor = new THREE.Color(0x000000); 
+        renderPass.clearAlpha = 0;
         composer.addPass(renderPass);
 
+        // SSAO - Standard
         const ssaoPass = new SSAOPass(scene, camera, width, height);
-        ssaoPass.kernelRadius = 16;
-        ssaoPass.minDistance = 0.005;
-        ssaoPass.maxDistance = 0.1;
-        ssaoPass.enabled = false;
-        ssaoPassRef.current = ssaoPass;
         composer.addPass(ssaoPass);
+        
+        // GTAO - High Quality
+        const gtaoPass = new GTAOPass(scene, camera, width, height);
+        gtaoPass.enabled = false;
+        composer.addPass(gtaoPass);
 
-        const bokehPass = new BokehPass(scene, camera, { focus: config.focus, aperture: config.aperture, maxblur: config.maxBlur });
-        bokehPass.enabled = false;
-        bokehPassRef.current = bokehPass;
+        const bokehPass = new BokehPass(scene, camera, { focus: 1980, aperture: 0.0001, maxblur: 0.01 });
         composer.addPass(bokehPass);
 
-        const bloomPass = new UnrealBloomPass( new THREE.Vector2( width, height ), 1.5, 0.4, 0.85 );
-        bloomPassRef.current = bloomPass;
-        composer.addPass( bloomPass );
+        const bloomPass = new UnrealBloomPass(new THREE.Vector2(width, height), 1.5, 0.4, 0.85);
+        composer.addPass(bloomPass);
 
-        const rgbShiftPass = new ShaderPass(RGBShiftShader);
-        rgbShiftPass.uniforms['amount'].value = 0.001;
-        rgbShiftPass.enabled = false;
-        rgbPassRef.current = rgbShiftPass;
-        composer.addPass(rgbShiftPass);
+        const rgbPass = new ShaderPass(RGBShiftShader);
+        rgbPass.uniforms['amount'].value = 0.001;
+        composer.addPass(rgbPass);
+        
+        composer.addPass(new OutputPass());
 
-        const outputPass = new OutputPass();
-        composer.addPass(outputPass);
-        composerRef.current = composer;
+        ctx.current = { renderer, scene, camera, controls, composer, ambLight, dirLight, hemiLight, volGroup, ssaoPass, gtaoPass, bokehPass, bloomPass, rgbPass, roomEnv };
 
-        if (feedbackCanvasRef.current) {
-            feedbackCanvasRef.current.width = width;
-            feedbackCanvasRef.current.height = height;
-        }
-
-        const handleResize = () => {
-          const w = window.innerWidth;
-          const h = window.innerHeight;
-          if (cameraRef.current && rendererRef.current) {
-            cameraRef.current.aspect = w / h;
-            cameraRef.current.updateProjectionMatrix();
-            rendererRef.current.setSize(w, h);
-            if (composerRef.current) {
-                composerRef.current.setSize(w, h);
-                composerRef.current.renderTarget1.setSize(w, h);
-                if (ssaoPassRef.current) ssaoPassRef.current.setSize(w, h);
-            }
-            if (feedbackCanvasRef.current) {
-                feedbackCanvasRef.current.width = w;
-                feedbackCanvasRef.current.height = h;
-                const ctx = feedbackCanvasRef.current.getContext('2d');
-                if(ctx) { ctx.fillStyle = '#000000'; ctx.fillRect(0,0,w,h); }
-            }
-          }
+        const onResize = () => {
+          const w = window.innerWidth, h = window.innerHeight;
+          camera.aspect = w / h; camera.updateProjectionMatrix();
+          renderer.setSize(w, h); composer.setSize(w, h);
+          ssaoPass.setSize(w, h);
+          gtaoPass.setSize(w, h);
         };
-        window.addEventListener('resize', handleResize);
+        window.addEventListener('resize', onResize);
 
         return () => {
-          window.removeEventListener('resize', handleResize);
-          if (rendererRef.current) rendererRef.current.dispose();
-          if (containerRef.current && rendererRef.current?.domElement) containerRef.current.removeChild(rendererRef.current.domElement);
-          if (animationIdRef.current) cancelAnimationFrame(animationIdRef.current);
+          window.removeEventListener('resize', onResize);
+          renderer.dispose();
+          containerRef.current?.removeChild(renderer.domElement);
+          if (ctx.current.animId) cancelAnimationFrame(ctx.current.animId);
         };
       }, []);
 
+      // Update Uniforms & Pass States
       useEffect(() => {
-        if (!rendererRef.current || !sceneRef.current) return;
-        if (config.enableFeedback) {
-          sceneRef.current.background = null; 
-          rendererRef.current.setClearColor(0x000000, 0); 
+        const c = ctx.current;
+        if (!c.composer) return;
+        
+        const isPlaster = config.materialType === 'plaster';
+
+        // Lighting Logic
+        if (isPlaster) {
+            c.ambLight.intensity = 0.2; 
+            c.dirLight.intensity = 2.0; 
+            c.hemiLight.intensity = 0.15; 
+            c.scene.background = null; 
+            c.ssaoPass.enabled = false;
+            c.gtaoPass.enabled = true;
+            c.gtaoPass.updateGtaoMaterial({ 
+                radius: 10, distanceExponent: 1, thickness: 5, scale: 1.5, samples: 32
+            });
+            c.bloomPass.enabled = true;
+            c.bloomPass.strength = 0.2; 
+            c.bloomPass.radius = 0.5;
+            c.bloomPass.threshold = 0.7; 
         } else {
-          sceneRef.current.background = new THREE.Color(0x020202);
-          rendererRef.current.setClearColor(0x020202, 1);
+            c.ambLight.intensity = config.ambientLightBrightness * 0.01;
+            c.dirLight.intensity = 0.5;
+            c.hemiLight.intensity = 0.0;
+            c.scene.background = null; 
+            c.ssaoPass.enabled = config.enableSSAO;
+            c.ssaoPass.kernelRadius = config.ssaoRadius;
+            c.ssaoPass.minDistance = config.ssaoMinDist;
+            c.ssaoPass.maxDistance = config.ssaoMaxDist;
+            c.gtaoPass.enabled = false;
+            c.bloomPass.enabled = true;
+            c.bloomPass.strength = config.bloomStrength;
+            c.bloomPass.radius = config.bloomRadius;
+            c.bloomPass.threshold = config.bloomThreshold;
         }
-      }, [config.enableFeedback]);
 
-      useEffect(() => { if (ambientLightRef.current) ambientLightRef.current.intensity = config.ambientLightBrightness * 0.01; }, [config.ambientLightBrightness]);
+        // Volume Lights Logic
+        if (config.enableVolumeLights) {
+            // Darken scene to make lights pop
+            c.ambLight.intensity = 0.05;
+            c.dirLight.intensity = 0.05;
+            c.hemiLight.intensity = 0.0;
 
-      useEffect(() => {
-        if (bokehPassRef.current) bokehPassRef.current.enabled = config.enableDoF;
-        if (rgbPassRef.current) rgbPassRef.current.enabled = config.enableRGB;
-        if (ssaoPassRef.current) {
-            ssaoPassRef.current.enabled = config.enableSSAO;
-            ssaoPassRef.current.kernelRadius = config.ssaoRadius;
-            ssaoPassRef.current.minDistance = config.ssaoMinDist;
-            ssaoPassRef.current.maxDistance = config.ssaoMaxDist;
+            // Populate volume lights if empty
+            if (c.volGroup.children.length === 0) {
+                const width = 600;
+                const height = 600; // Square
+                const intensity = 70.0; // Reduced from 100.0 (30% less)
+                const dist = 1200; // Further out
+
+                const createVolumetricLight = (color, x, z, yRot) => {
+                    const rectLight = new THREE.RectAreaLight(color, intensity, width, height);
+                    rectLight.position.set(x, 0, z); // Centered vertically
+                    
+                    // Only the light source remains
+                    
+                    rectLight.lookAt(0, 0, 0); // Face center
+                    return rectLight;
+                };
+
+                const red = createVolumetricLight(0xff0000, dist, 0);
+                const green = createVolumetricLight(0x00ff00, -dist/2, dist*0.866);
+                const blue = createVolumetricLight(0x0000ff, -dist/2, -dist*0.866);
+
+                c.volGroup.add(red, green, blue);
+            }
+            c.volGroup.visible = true;
+        } else {
+            c.volGroup.visible = false;
         }
-      }, [config.enableDoF, config.enableRGB, config.enableSSAO, config.ssaoRadius, config.ssaoMinDist, config.ssaoMaxDist]);
 
-      useEffect(() => {
-        if (bloomPassRef.current) {
-          bloomPassRef.current.threshold = config.bloomThreshold;
-          bloomPassRef.current.strength = config.bloomStrength;
-          bloomPassRef.current.radius = config.bloomRadius;
+        // Fog Logic
+        if (config.enableFog) {
+            c.scene.fog = new THREE.Fog(0x000000, 1000, 4000);
+            c.scene.background = null; 
+        } else {
+            c.scene.fog = null;
+            c.scene.background = null;
         }
-      }, [config.bloomThreshold, config.bloomStrength, config.bloomRadius]);
 
-      useEffect(() => {
-          if (bokehPassRef.current) {
-              bokehPassRef.current.uniforms['focus'].value = config.focus;
-              bokehPassRef.current.uniforms['aperture'].value = config.aperture;
-              bokehPassRef.current.uniforms['maxblur'].value = config.maxBlur;
-          }
-      }, [config.focus, config.aperture, config.maxBlur]);
+        // DoF
+        c.bokehPass.enabled = config.enableDoF;
+        c.bokehPass.uniforms.focus.value = config.focus;
+        c.bokehPass.uniforms.aperture.value = config.aperture;
+        c.bokehPass.uniforms.maxblur.value = config.maxBlur;
 
+        // RGB
+        c.rgbPass.enabled = config.enableRGB;
+      }, [config]);
+
+      // Recreate Mesh on Material/Resolution change
       useEffect(() => {
-        if (!sceneRef.current) return;
-        if (effectRef.current) {
-          sceneRef.current.remove(effectRef.current);
-          if (effectRef.current.geometry) effectRef.current.geometry.dispose();
-          if (!Array.isArray(effectRef.current.material)) effectRef.current.material.dispose();
-          effectRef.current = null;
+        const c = ctx.current;
+        if (!c.scene) return;
+
+        if (c.mesh) {
+            c.scene.remove(c.mesh);
+            c.mesh.geometry.dispose();
+            c.mesh.material.dispose();
         }
+
+        const injectSlicing = (shader) => {
+          shader.uniforms.uSliced = { value: config.slicedMode ? 1.0 : 0.0 };
+          shader.vertexShader = `varying vec3 vPos;\n` + shader.vertexShader.replace('#include <begin_vertex>', '#include <begin_vertex>\nvPos = position;');
+          shader.fragmentShader = `uniform float uSliced;\nvarying vec3 vPos;\n` + shader.fragmentShader.replace('void main() {', 'void main() {\n if (uSliced > 0.5 && smoothstep(0.98, 1.0, sin(vPos.y * 200.0)) < 0.1) discard;');
+        };
 
         let material;
         if (config.materialType === 'water') {
             material = new THREE.MeshPhysicalMaterial({
-                color: config.color,
-                metalness: 0.1,
-                roughness: 0.1,
-                transmission: 0.95,
-                thickness: 20,
-                ior: 1.33,
-                side: THREE.DoubleSide,
-                envMapIntensity: 1.5,
-                clearcoat: 1.0,
-                attenuationColor: new THREE.Color(config.color),
-                attenuationDistance: 2000.0
+                color: config.color, metalness: 0.5, roughness: 0,
+                transmission: 1.0, thickness: 5, ior: 1.33,
+                side: THREE.DoubleSide, envMapIntensity: 2.0,
+                clearcoat: 1.0, transparent: true, opacity: 0.05
             });
+            material.onBeforeCompile = (shader) => {
+              injectSlicing(shader);
+              material.userData.shader = shader;
+            };
+        } else if (config.materialType === 'plaster') {
+            material = new THREE.MeshPhysicalMaterial({
+                color: config.color, 
+                metalness: 0.0, 
+                roughness: 0.8,
+                clearcoat: 0.0, 
+                side: THREE.DoubleSide,
+                dithering: true
+            });
+             material.onBeforeCompile = (shader) => {
+              injectSlicing(shader);
+              material.userData.shader = shader;
+            };
         } else {
-            const vertexShader = `varying vec3 vPos; void main() { vPos = position; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }`;
-            const fragmentShader = `uniform vec3 uColor; uniform float uSliced; varying vec3 vPos; void main() { float frequency = 200.0; float v = sin(vPos.y * frequency); float line = smoothstep(0.98, 0.999, v); if (uSliced > 0.5) { if (line < 0.1) discard; } vec3 finalColor = uColor * line; gl_FragColor = vec4(finalColor, 1.0); }`;
             material = new THREE.ShaderMaterial({
               uniforms: { uColor: { value: new THREE.Color(config.color) }, uSliced: { value: config.slicedMode ? 1.0 : 0.0 } },
-              vertexShader, fragmentShader, side: THREE.DoubleSide
+              vertexShader: `varying vec3 vPos; void main() { vPos = position; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }`,
+              fragmentShader: `uniform vec3 uColor; uniform float uSliced; varying vec3 vPos; void main() { 
+                  float line = smoothstep(0.98, 0.999, sin(vPos.y * 200.0));
+                  if (uSliced > 0.5 && line < 0.1) discard;
+                  gl_FragColor = vec4(uColor * line, 1.0); 
+              }`,
+              side: THREE.DoubleSide
             });
         }
 
-        const effect = new MarchingCubes(config.resolution, material, true, true, 100000);
-        effect.position.set(0, 0, 0);
-        effect.scale.set(800, 800, 800); 
-        effect.enableUvs = false;
-        effect.enableColors = false;
-        effect.castShadow = true;
-        effect.receiveShadow = true;
-        sceneRef.current.add(effect);
-        effectRef.current = effect;
+        const mesh = new MarchingCubes(config.resolution, material, true, true, 100000);
+        mesh.position.set(0, 0, 0);
+        mesh.scale.set(800, 800, 800);
+        mesh.enableUvs = false; mesh.enableColors = false;
+        mesh.castShadow = true; mesh.receiveShadow = true;
+        
+        c.scene.add(mesh);
+        c.mesh = mesh;
       }, [config.resolution, config.color, config.materialType]); 
 
+      // Animation Loop
       useEffect(() => {
-        if (!sceneRef.current || !rendererRef.current || !cameraRef.current) return;
-        const updateCubes = (object, time) => {
-          object.reset();
-          const subtract = 12;
-          const strength = 1.2 / ((Math.sqrt(config.numBlobs) - 1) / 4 + 1);
-          for (let i = 0; i < config.numBlobs; i++) {
-            const ballx = Math.sin(i + 1.26 * time * (1.03 + 0.5 * Math.cos(0.21 * i))) * 0.25 + 0.5;
-            const bally = Math.cos(i + 1.12 * time * Math.cos(1.22 + 0.1424 * i)) * 0.25 + 0.5; 
-            const ballz = Math.cos(i + 1.32 * time * 0.1 * Math.sin((0.92 + 0.53 * i))) * 0.25 + 0.5;
-            object.addBall(ballx, bally, ballz, strength, subtract);
-          }
-          if (config.floor) object.addPlaneY(2, 12);
-          if (config.wallZ) object.addPlaneZ(2, 12);
-          if (config.wallX) object.addPlaneX(2, 12);
-          object.isolation = config.isolation;
-        };
+        const c = ctx.current;
+        if (!c.scene) return;
 
+        let time = 0;
         const animate = () => {
-          animationIdRef.current = requestAnimationFrame(animate);
-          const delta = 0.01 * config.speed; 
-          timeRef.current += delta;
-          if (effectRef.current) {
-            updateCubes(effectRef.current, timeRef.current);
-            effectRef.current.update(); 
-            effectRef.current.rotation.x = Math.sin(timeRef.current * 0.5) + Math.sin(timeRef.current * 0.32) * 2;
-            effectRef.current.rotation.y = Math.cos(timeRef.current * 0.4) + Math.sin(timeRef.current * 0.15) * 2;
+          c.animId = requestAnimationFrame(animate);
+          time += 0.01 * config.speed;
+          
+          if (config.enableVolumeLights && c.volGroup.visible) {
+             c.volGroup.rotation.y = -time * 0.1; // Rotate lights
+          }
+
+          if (c.mesh) {
+            c.mesh.reset();
+            const strength = 1.2 / ((Math.sqrt(config.numBlobs) - 1) / 4 + 1);
+            
+            for (let i = 0; i < config.numBlobs; i++) {
+                const grp = Math.floor(i / 4), sub = i % 4;
+                const cycle = time * 0.5 + grp;
+                const stage = Math.sin(cycle) + 1; 
+                
+                const range = 0.22;
+                const gx = Math.sin(grp * 13.4 + time * 0.5) * range + 0.5;
+                const gy = Math.cos(grp * 21.6 + time * 0.4) * range + 0.5;
+                const gz = Math.sin(grp * 45.2 + time * 0.6) * range + 0.5;
+
+                const sp1 = THREE.MathUtils.smoothstep(stage, 0.2, 0.8) * 0.12;
+                const sp2 = THREE.MathUtils.smoothstep(stage, 1.2, 1.8) * 0.08;
+                
+                let ox = (sub < 2 ? -sp1 : sp1);
+                let oy = (sub % 2 === 0 ? -sp2 : sp2);
+                
+                const rot = time * 0.3 + grp, cR = Math.cos(rot), sR = Math.sin(rot);
+                const rx = ox * cR - oy * sR, ry = ox * sR + oy * cR;
+                
+                const wx = Math.sin(time * 2 + i) * 0.02;
+                const wy = Math.cos(time * 2.1 + i) * 0.02;
+
+                let fx = gx + rx + wx;
+                let fy = gy + ry + wy;
+                let fz = gz + wx;
+                
+                const margin = 0.25; 
+                fx = Math.max(margin, Math.min(1.0 - margin, fx));
+                fy = Math.max(margin, Math.min(1.0 - margin, fy));
+                fz = Math.max(margin, Math.min(1.0 - margin, fz));
+
+                c.mesh.addBall(fx, fy, fz, strength, 12);
+            }
+            
+            if (config.floor) c.mesh.addPlaneY(2, 12);
+            if (config.wallZ) c.mesh.addPlaneZ(2, 12);
+            if (config.wallX) c.mesh.addPlaneX(2, 12);
+            
+            c.mesh.isolation = config.isolation;
+            c.mesh.update();
+            c.mesh.rotation.set(Math.sin(time * 0.5) + Math.sin(time * 0.32) * 2, Math.cos(time * 0.4) + Math.sin(time * 0.15) * 2, 0);
+
+            const mat = c.mesh.material;
+            const isSliced = config.slicedMode ? 1.0 : 0.0;
             if (config.materialType === 'striped') {
-                const mat = effectRef.current.material;
                 if (mat.uniforms) {
-                    if (mat.uniforms.uColor) mat.uniforms.uColor.value.set(config.color);
-                    if (mat.uniforms.uSliced) mat.uniforms.uSliced.value = config.slicedMode ? 1.0 : 0.0;
+                    mat.uniforms.uColor.value.set(config.color);
+                    mat.uniforms.uSliced.value = isSliced;
                 }
-            } else if (config.materialType === 'water') {
-                effectRef.current.material.color.set(config.color);
-                if (effectRef.current.material.attenuationColor) {
-                    effectRef.current.material.attenuationColor.set(config.color);
-                }
+            } else {
+                mat.color.set(config.color);
+                if (mat.userData.shader?.uniforms) mat.userData.shader.uniforms.uSliced.value = isSliced;
             }
           }
-          if (controlsRef.current) controlsRef.current.update();
-          if (composerRef.current) composerRef.current.render();
-          if (config.enableFeedback && feedbackCanvasRef.current && rendererRef.current) {
-              const ctx = feedbackCanvasRef.current.getContext('2d');
-              if (ctx) {
-                  const canvas = feedbackCanvasRef.current;
-                  ctx.save();
-                  ctx.imageSmoothingEnabled = false;
-                  ctx.translate(canvas.width / 2, canvas.height / 2);
-                  ctx.rotate(0.005);
-                  ctx.scale(1.003, 1.003);
-                  ctx.translate(-canvas.width / 2, -canvas.height / 2);
-                  ctx.drawImage(canvas, 0, 0);
-                  ctx.restore();
-                  ctx.globalAlpha = 0.7;
-                  ctx.drawImage(rendererRef.current.domElement, 0, 0, canvas.width, canvas.height);
-                  ctx.globalAlpha = 1.0;
-              }
-          }
+          
+          c.controls.update();
+          c.composer.render();
         };
-        if (!animationIdRef.current) animate();
+        
+        if (!c.animId) animate();
         return () => {
-          if (animationIdRef.current) { cancelAnimationFrame(animationIdRef.current); animationIdRef.current = null; }
+            if (c.animId) { cancelAnimationFrame(c.animId); c.animId = null; }
         };
-      }, [config.speed, config.numBlobs, config.isolation, config.floor, config.wallX, config.wallZ, config.color, config.slicedMode, config.enableFeedback, config.materialType]);
+      }, [config]);
 
-      return (
-        <React.Fragment>
-          <canvas ref={feedbackCanvasRef} className="absolute inset-0 z-0 bg-black pointer-events-none" style={{ opacity: config.enableFeedback ? 1 : 0 }} />
-          <div ref={containerRef} className="absolute inset-0 z-10 cursor-move" />
-        </React.Fragment>
-      );
+      return <div ref={containerRef} className="absolute inset-0 z-10 cursor-move" />;
     };
 
     const App = () => {
