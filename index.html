@@ -2,15 +2,50 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no" />
   <title>motion</title>
   <script src="https://cdn.tailwindcss.com"></script>
   <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  
+  <!-- Montserrat Font Import -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+
   <style>
-    body { margin: 0; overflow: hidden; background-color: #000; color: #e2e8f0; font-family: system-ui, sans-serif; }
-    canvas { display: block; }
+    body { margin: 0; overflow: hidden; background-color: #000; color: #e2e8f0; font-family: 'Montserrat', sans-serif; }
+    
+    /* Ensure form elements inherit the font */
+    button, input, select, textarea {
+      font-family: inherit;
+    }
+
+    canvas { display: block; touch-action: none; }
     .scrollbar-hide::-webkit-scrollbar { display: none; }
     .scrollbar-hide { -ms-overflow-style: none; scrollbar-width: none; }
+    
+    /* Custom Range Slider Styling for Premium Feel */
+    input[type=range] {
+      -webkit-appearance: none; 
+      background: transparent; 
+    }
+    input[type=range]::-webkit-slider-thumb {
+      -webkit-appearance: none;
+      height: 14px;
+      width: 14px;
+      border-radius: 50%;
+      background: #ffffff;
+      margin-top: -5px; 
+      box-shadow: 0 0 10px rgba(255,255,255,0.5);
+      cursor: pointer;
+    }
+    input[type=range]::-webkit-slider-runnable-track {
+      width: 100%;
+      height: 4px;
+      cursor: pointer;
+      background: rgba(255,255,255,0.1);
+      border-radius: 2px;
+    }
   </style>
   <script type="importmap">
     {
@@ -29,10 +64,11 @@
   <script type="text/babel" data-type="module">
     import React, { useState, useEffect, useRef } from 'react';
     import ReactDOM from 'react-dom/client';
-    import { Settings2, RotateCcw } from 'lucide-react';
+    import { Settings2, RotateCcw, X, ChevronDown } from 'lucide-react';
     import * as THREE from 'three';
     import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls';
     import { MarchingCubes } from 'three/examples/jsm/objects/MarchingCubes';
+    import { Reflector } from 'three/examples/jsm/objects/Reflector.js';
     import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment';
     import { EffectComposer } from 'three/examples/jsm/postprocessing/EffectComposer';
     import { RenderPass } from 'three/examples/jsm/postprocessing/RenderPass';
@@ -46,105 +82,317 @@
     import { RectAreaLightUniformsLib } from 'three/examples/jsm/lights/RectAreaLightUniformsLib.js';
     import { RectAreaLightHelper } from 'three/examples/jsm/helpers/RectAreaLightHelper.js';
 
-    const DEFAULT_CONFIG = {
-      speed: 0.5, numBlobs: 32, resolution: 60, isolation: 35,
-      floor: false, wallX: false, wallZ: false,
-      color: '#ffffff', ambientLightBrightness: 80, materialType: 'plaster',
-      bloomStrength: 0.2, bloomRadius: 0.5, bloomThreshold: 0.9,
-      focus: 1980.0, aperture: 0.00001, maxBlur: 0.01,
-      enableSSAO: false, ssaoRadius: 16, ssaoMinDist: 0.005, ssaoMaxDist: 0.1,
-      enableDoF: true, enableRGB: true, slicedMode: true,
-      enableVolumeLights: true, enableFog: true,
+    // Custom Noise Shader
+    const NoiseShader = {
+      uniforms: {
+        tDiffuse: { value: null },
+        uTime: { value: 0 },
+        uOpacity: { value: 0 },
+        uBlendMode: { value: 0 } // 0: Overlay, 1: Multiply, 2: Additive, 3: SoftLight
+      },
+      vertexShader: `
+        varying vec2 vUv;
+        void main() {
+          vUv = uv;
+          gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+        }
+      `,
+      fragmentShader: `
+        uniform sampler2D tDiffuse;
+        uniform float uTime;
+        uniform float uOpacity;
+        uniform int uBlendMode;
+        varying vec2 vUv;
+
+        // Gold Noise function - high quality, no patterns
+        float rand(vec2 xy) {
+            return fract(tan(distance(xy * 1.61803398874989484820459, xy) * uTime) * xy.x);
+        }
+        
+        // Backup standard hash if Gold Noise is too heavy or specific
+        float randStandard(vec2 co) {
+            return fract(sin(dot(co.xy ,vec2(12.9898,78.233))) * 43758.5453);
+        }
+
+        void main() {
+            vec4 base = texture2D(tDiffuse, vUv);
+            
+            // Using a simpler robust hash for static-like noise
+            vec2 seed = gl_FragCoord.xy * 0.01 + mod(uTime, 100.0);
+            float noise = randStandard(seed * 100.0);
+
+            vec3 result = base.rgb;
+            
+            // 0: Overlay
+            if (uBlendMode == 0) {
+                for (int i = 0; i < 3; i++) {
+                    float b = base.rgb[i];
+                    if (b < 0.5) {
+                        result[i] = 2.0 * b * noise;
+                    } else {
+                        result[i] = 1.0 - 2.0 * (1.0 - b) * (1.0 - noise);
+                    }
+                }
+            }
+            // 1: Multiply
+            else if (uBlendMode == 1) {
+                result = base.rgb * noise;
+            }
+            // 2: Additive
+            else if (uBlendMode == 2) {
+                result = base.rgb + noise;
+            }
+            // 3: SoftLight
+            else if (uBlendMode == 3) {
+                for (int i = 0; i < 3; i++) {
+                    float b = base.rgb[i];
+                    float n = noise;
+                    result[i] = (1.0 - 2.0 * n) * b * b + 2.0 * n * b;
+                }
+            }
+
+            // Apply opacity
+            gl_FragColor = vec4(mix(base.rgb, result, uOpacity), base.a);
+        }
+      `
     };
 
+    const DEFAULT_CONFIG = {
+      speed: 0.5, numBlobs: 32, resolution: 60, isolation: 35,
+      floor: false, // Standard MC floor (internal)
+      enableReflectiveFloor: true, // New Glossy Floor
+      wallX: false, wallZ: false,
+      color: '#ffaa33', ambientLightBrightness: 80, materialType: 'wax',
+      bloomStrength: 0.3, bloomRadius: 0.5, bloomThreshold: 0.9,
+      focus: 1980.0, aperture: 0.00001, maxBlur: 0.01,
+      enableSSAO: true, ssaoRadius: 16, ssaoMinDist: 0.005, ssaoMaxDist: 0.1,
+      enableDoF: true, enableRGB: true, slicedMode: true,
+      enableVolumeLights: true, enableFog: true,
+      noiseOpacity: 0.1, noiseBlendMode: 'softlight'
+    };
+
+    const Toggle = ({ label, checked, onChange }) => (
+      <label className="flex items-center justify-between cursor-pointer group py-2">
+        <span className="text-gray-300 text-xs font-medium group-hover:text-white transition-colors tracking-wide">{label}</span>
+        <div className="relative">
+          <input type="checkbox" checked={checked} onChange={(e) => onChange(e.target.checked)} className="sr-only peer" />
+          <div className="w-9 h-5 bg-white/10 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white/80 after:border-gray-300 after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-indigo-600 peer-checked:after:bg-white shadow-inner"></div>
+        </div>
+      </label>
+    );
+
     const ControlPanel = ({ config, setConfig }) => {
+      const [isOpen, setIsOpen] = useState(false);
+      const [isMobile, setIsMobile] = useState(false);
+      const [isColorActive, setIsColorActive] = useState(false);
+      const isHovering = useRef(false);
+      
+      useEffect(() => {
+        const check = () => setIsMobile(window.innerWidth < 768);
+        check();
+        window.addEventListener('resize', check);
+        return () => window.removeEventListener('resize', check);
+      }, []);
+
       const update = (k, v) => setConfig(p => ({ ...p, [k]: v }));
+
+      // Dark Premium Theme Classes
+      const panelClasses = isMobile 
+        ? `fixed inset-0 z-[60] bg-[#050505]/95 backdrop-blur-xl p-6 overflow-y-auto transition-transform duration-500 cubic-bezier(0.16, 1, 0.3, 1) ${isOpen ? 'translate-y-0' : 'translate-y-full'}`
+        : `absolute top-6 left-6 w-80 bg-[#080808]/60 backdrop-blur-2xl border border-white/5 rounded-2xl p-6 shadow-[0_20px_50px_-12px_rgba(0,0,0,1)] text-sm z-50 max-h-[90vh] overflow-y-auto transition-all duration-500 cubic-bezier(0.16, 1, 0.3, 1) scrollbar-hide ${isOpen ? 'opacity-100 pointer-events-auto translate-x-0' : 'opacity-0 pointer-events-none -translate-x-4'}`;
+
+      const labelClass = "text-[10px] font-bold tracking-[0.2em] text-gray-500 uppercase mb-3 block";
+      const valueClass = "font-mono text-indigo-400 text-[10px]";
+      const borderClass = "border-white/5 my-6";
+      const sectionClass = "mb-6";
+
       return (
-        <div className="absolute top-4 left-4 w-80 bg-white/90 backdrop-blur-md border border-slate-200 rounded-xl p-5 shadow-2xl text-sm z-50 max-h-[90vh] overflow-y-auto opacity-0 hover:opacity-100 transition-opacity duration-300 scrollbar-hide text-slate-800">
-          <div className="flex justify-between mb-6 text-indigo-600">
-            <div className="flex gap-2"><Settings2 size={20} /><h2 className="font-bold tracking-wider">Controls</h2></div>
-            <button onClick={() => setConfig(DEFAULT_CONFIG)} className="p-1 hover:bg-slate-100 rounded-full text-slate-400 hover:text-slate-700"><RotateCcw size={16} /></button>
+        <>
+          <div 
+            className="absolute top-6 left-6 z-40"
+            onMouseEnter={() => !isMobile && setIsOpen(true)}
+          >
+             <button 
+               onClick={() => setIsOpen(true)}
+               className={`p-3 rounded-2xl bg-black/40 backdrop-blur-xl border border-white/10 text-white shadow-2xl transition-all duration-300 hover:bg-black/60 hover:scale-105 active:scale-95 group ${(isOpen && !isMobile) ? 'opacity-0 pointer-events-none' : 'opacity-100'}`}
+             >
+               <Settings2 size={20} className="group-hover:rotate-90 transition-transform duration-700" />
+             </button>
           </div>
-          
-          <div className="space-y-5">
-            <div className="space-y-2">
-              <label className="text-xs font-semibold text-slate-500 uppercase">Material</label>
-              <div className="flex gap-2">
-                {['striped', 'water', 'plaster'].map(type => (
-                  <button key={type} onClick={() => update('materialType', type)} 
-                    className={`flex-1 py-2 rounded-lg border text-xs font-bold capitalize transition-colors ${config.materialType === type ? 'bg-indigo-600 border-indigo-500 text-white' : 'bg-slate-100 border-slate-200 text-slate-500 hover:bg-slate-200'}`}>
-                    {type}
+
+          <div 
+            className={panelClasses}
+            onMouseEnter={() => { isHovering.current = true; }}
+            onMouseLeave={() => { 
+                isHovering.current = false;
+                if (!isMobile && !isColorActive) setIsOpen(false);
+            }}
+          >
+            <div className="flex justify-between mb-8 items-center">
+              <div className="flex gap-3 items-center">
+                <div className="p-1.5 bg-indigo-500/10 rounded-lg border border-indigo-500/20">
+                  <Settings2 size={16} className="text-indigo-400" />
+                </div>
+                <h2 className="font-semibold text-white tracking-wide text-sm">CONFIGURATION</h2>
+              </div>
+              <div className="flex gap-2 items-center">
+                <button 
+                  onClick={() => setConfig(DEFAULT_CONFIG)} 
+                  className="p-2 rounded-full hover:bg-white/10 transition-colors text-gray-400 hover:text-white"
+                  title="Reset to Defaults"
+                >
+                  <RotateCcw size={14} />
+                </button>
+                {isMobile && (
+                  <button onClick={() => setIsOpen(false)} className="p-2 bg-white/5 rounded-full text-gray-200">
+                    <X size={18} />
                   </button>
+                )}
+              </div>
+            </div>
+            
+            <div className="pb-4">
+              <div className={sectionClass}>
+                <label className={labelClass}>Material Definition</label>
+                <div className="grid grid-cols-2 gap-2">
+                  {['wax', 'water', 'plaster', 'striped'].map(type => (
+                    <button key={type} onClick={() => update('materialType', type)} 
+                      className={`py-2.5 rounded-lg text-[11px] font-medium uppercase tracking-wider transition-all duration-300 border ${config.materialType === type ? 'bg-indigo-600/90 border-indigo-500/50 text-white shadow-lg shadow-indigo-900/50' : 'bg-white/5 border-transparent text-gray-400 hover:bg-white/10 hover:text-gray-200'}`}>
+                      {type}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div className={sectionClass}>
+                <label className={labelClass}>Base Chromaticity</label>
+                <div className="flex items-center gap-3 p-1 pr-3 rounded-xl border border-white/5 bg-white/[0.02]">
+                  <div className="relative overflow-hidden w-8 h-8 rounded-lg shadow-inner">
+                    <input 
+                      type="color" 
+                      value={config.color} 
+                      onChange={(e) => update('color', e.target.value)} 
+                      onFocus={() => setIsColorActive(true)}
+                      onBlur={() => {
+                        setIsColorActive(false);
+                        if (!isMobile && !isHovering.current) setIsOpen(false);
+                      }}
+                      className="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 w-[150%] h-[150%] cursor-pointer border-none p-0" 
+                    />
+                  </div>
+                  <span className="font-mono text-xs text-gray-300 flex-1 text-center">{config.color.toUpperCase()}</span>
+                </div>
+              </div>
+
+              <hr className={borderClass} />
+              
+              <div className={sectionClass}>
+                <label className={labelClass}>Scene Effects</label>
+                <div className="space-y-1">
+                   <Toggle label="Sliced Mode" checked={config.slicedMode} onChange={(v) => update('slicedMode', v)} />
+                   <Toggle label="Volume Lights" checked={config.enableVolumeLights} onChange={(v) => update('enableVolumeLights', v)} />
+                   <Toggle label="Volumetric Fog" checked={config.enableFog} onChange={(v) => update('enableFog', v)} />
+                   <Toggle label="Reflective Floor" checked={config.enableReflectiveFloor} onChange={(v) => update('enableReflectiveFloor', v)} />
+                </div>
+              </div>
+
+              <hr className={borderClass} />
+
+              <div className={sectionClass}>
+                 <div className="flex justify-between items-end mb-3">
+                   <label className="text-[10px] font-bold tracking-[0.2em] text-gray-500 uppercase">Bloom Strength</label>
+                   <span className={valueClass}>{config.bloomStrength.toFixed(2)}</span>
+                 </div>
+                 <input type="range" min="0" max="3" step="0.05" value={config.bloomStrength} onChange={(e) => update('bloomStrength', +e.target.value)} className="w-full" />
+              </div>
+              
+              <hr className={borderClass} />
+
+              <div className={sectionClass}>
+                 <div className="flex justify-between items-end mb-3">
+                   <label className="text-[10px] font-bold tracking-[0.2em] text-gray-500 uppercase">Film Grain</label>
+                   <span className={valueClass}>{Math.round(config.noiseOpacity * 100)}%</span>
+                 </div>
+                 <input type="range" min="0" max="1" step="0.01" value={config.noiseOpacity} onChange={(e) => update('noiseOpacity', +e.target.value)} className="w-full mb-4" />
+                 
+                 <div className="grid grid-cols-4 gap-1">
+                  {['overlay', 'multiply', 'additive', 'softlight'].map(mode => (
+                      <button key={mode} onClick={() => update('noiseBlendMode', mode)}
+                          title={mode}
+                          className={`py-2 rounded text-[10px] uppercase font-bold transition-all ${config.noiseBlendMode === mode ? 'bg-white/20 text-white' : 'bg-transparent text-gray-600 hover:text-gray-400'}`}>
+                          {mode.slice(0,3)}
+                      </button>
+                  ))}
+                 </div>
+              </div>
+
+              <hr className={borderClass} />
+
+              <div className={sectionClass}>
+                <div className="flex justify-between items-center mb-1">
+                  <label className="text-[10px] font-bold tracking-[0.2em] text-gray-500 uppercase">AO Radius</label>
+                  <Toggle label="" checked={config.enableSSAO} onChange={(v) => update('enableSSAO', v)} />
+                </div>
+                {config.enableSSAO && (
+                  <div className="mt-2 animate-in fade-in slide-in-from-top-1 duration-300">
+                     <div className="flex justify-between text-[10px] text-gray-500 mb-2"><span>Radius Size</span><span className={valueClass}>{config.ssaoRadius}</span></div>
+                     <input type="range" min="1" max="32" value={config.ssaoRadius} onChange={(e) => update('ssaoRadius', +e.target.value)} className="w-full" />
+                  </div>
+                )}
+              </div>
+
+              <hr className={borderClass} />
+
+              <div className={sectionClass}>
+                <label className={labelClass}>Post Processing</label>
+                <div className="space-y-1">
+                   <Toggle label="Depth of Field" checked={config.enableDoF} onChange={(v) => update('enableDoF', v)} />
+                   
+                   {config.enableDoF && (
+                      <div className="mt-2 mb-3 pl-2 animate-in fade-in slide-in-from-top-1 duration-300 border-l-2 border-white/10">
+                         <div className="flex justify-between text-[10px] text-gray-500 mb-1">
+                            <span>Focus Distance</span>
+                            <span className={valueClass}>{config.focus.toFixed(0)}</span>
+                         </div>
+                         <input 
+                           type="range" 
+                           min="10" 
+                           max="3000" 
+                           step="10" 
+                           value={config.focus} 
+                           onChange={(e) => update('focus', +e.target.value)} 
+                           className="w-full" 
+                         />
+                      </div>
+                   )}
+
+                   <Toggle label="RGB Shift" checked={config.enableRGB} onChange={(v) => update('enableRGB', v)} />
+                </div>
+              </div>
+
+              <hr className={borderClass} />
+
+              <div className="space-y-5">
+                {[
+                  { label: 'Speed', key: 'speed', min: 0, max: 5, step: 0.1, fmt: v => v.toFixed(1) + 'x' },
+                  { label: 'Resolution', key: 'resolution', min: 10, max: 100, step: 1, fmt: v => v }
+                ].map(ctrl => (
+                  <div key={ctrl.key}>
+                    <div className="flex justify-between text-xs mb-2">
+                        <span className="text-gray-300 font-medium">{ctrl.label}</span>
+                        <span className={valueClass}>{ctrl.fmt(config[ctrl.key])}</span>
+                    </div>
+                    <input type="range" min={ctrl.min} max={ctrl.max} step={ctrl.step} value={config[ctrl.key]} onChange={(e) => update(ctrl.key, +e.target.value)} className="w-full" />
+                  </div>
                 ))}
               </div>
-            </div>
-
-            <div className="space-y-2">
-              <label className="text-xs font-semibold text-slate-500 uppercase">Base Color</label>
-              <div className="flex items-center gap-3 bg-slate-100 p-2 rounded-lg border border-slate-200">
-                <input type="color" value={config.color} onChange={(e) => update('color', e.target.value)} className="w-8 h-8 cursor-pointer bg-transparent border-none p-0" />
-                <span className="font-mono text-slate-600">{config.color}</span>
+              
+              <div className="mt-8 text-[10px] text-center text-gray-700 font-medium tracking-widest uppercase opacity-50">
+                Render Engine v2.0
               </div>
-            </div>
-
-            <hr className="border-slate-200" />
-            
-            <div className="space-y-2">
-              <label className="text-xs font-semibold text-slate-500 uppercase">Effects</label>
-              <label className="flex items-center gap-3 cursor-pointer group pt-1">
-                <input type="checkbox" checked={config.slicedMode} onChange={(e) => update('slicedMode', e.target.checked)} className="accent-indigo-500" />
-                <span className="text-slate-700">Sliced Mode</span>
-              </label>
-              <label className="flex items-center gap-3 cursor-pointer group pt-1">
-                <input type="checkbox" checked={config.enableVolumeLights} onChange={(e) => update('enableVolumeLights', e.target.checked)} className="accent-indigo-500" />
-                <span className="text-slate-700">Volume Lights</span>
-              </label>
-               <label className="flex items-center gap-3 cursor-pointer group pt-1">
-                <input type="checkbox" checked={config.enableFog} onChange={(e) => update('enableFog', e.target.checked)} className="accent-indigo-500" />
-                <span className="text-slate-700">Fog</span>
-              </label>
-            </div>
-
-            <hr className="border-slate-200" />
-
-            <div className="space-y-2">
-              <div className="flex justify-between">
-                <label className="text-xs font-semibold text-slate-500 uppercase">Ambient Occlusion</label>
-                <input type="checkbox" checked={config.enableSSAO} onChange={(e) => update('enableSSAO', e.target.checked)} className="accent-indigo-500" />
-              </div>
-              {config.enableSSAO && (
-                <div className="pl-2 border-l-2 border-indigo-100 mt-2">
-                   <div className="flex justify-between text-[10px] text-slate-400"><span>Radius</span><span className="font-mono text-indigo-500">{config.ssaoRadius}</span></div>
-                   <input type="range" min="1" max="32" value={config.ssaoRadius} onChange={(e) => update('ssaoRadius', +e.target.value)} className="w-full accent-indigo-500 h-1 bg-slate-200 rounded-lg appearance-none" />
-                </div>
-              )}
-            </div>
-
-            <hr className="border-slate-200" />
-
-            <div className="space-y-2">
-              <label className="text-xs font-semibold text-slate-500 uppercase">Post Processing</label>
-              <div className="space-y-1">
-                <label className="flex items-center gap-3 cursor-pointer"><input type="checkbox" checked={config.enableDoF} onChange={(e) => update('enableDoF', e.target.checked)} className="accent-indigo-500" /><span className="text-slate-700">Depth of Field</span></label>
-                <label className="flex items-center gap-3 cursor-pointer"><input type="checkbox" checked={config.enableRGB} onChange={(e) => update('enableRGB', e.target.checked)} className="accent-indigo-500" /><span className="text-slate-700">RGB Shift</span></label>
-              </div>
-            </div>
-
-            <hr className="border-slate-200" />
-
-            <div className="space-y-3">
-              {[
-                { label: 'Speed', key: 'speed', min: 0, max: 5, step: 0.1, fmt: v => v.toFixed(1) + 'x' },
-                { label: 'Resolution', key: 'resolution', min: 10, max: 100, step: 1, fmt: v => v }
-              ].map(ctrl => (
-                <div key={ctrl.key} className="space-y-1">
-                  <div className="flex justify-between text-xs font-semibold text-slate-500"><span>{ctrl.label}</span><span className="font-mono text-indigo-500">{ctrl.fmt(config[ctrl.key])}</span></div>
-                  <input type="range" min={ctrl.min} max={ctrl.max} step={ctrl.step} value={config[ctrl.key]} onChange={(e) => update(ctrl.key, +e.target.value)} className="w-full accent-indigo-500 h-1 bg-slate-200 rounded-lg appearance-none" />
-                </div>
-              ))}
             </div>
           </div>
-        </div>
+        </>
       );
     };
 
@@ -162,7 +410,7 @@
         const width = window.innerWidth, height = window.innerHeight;
         
         const renderer = new THREE.WebGLRenderer({ antialias: false, alpha: true, preserveDrawingBuffer: true });
-        renderer.setPixelRatio(window.devicePixelRatio);
+        renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2)); // Limit pixel ratio for mobile performance
         renderer.setSize(width, height);
         renderer.shadowMap.enabled = true;
         renderer.shadowMap.type = THREE.PCFSoftShadowMap;
@@ -177,7 +425,7 @@
         pmrem.dispose();
 
         const camera = new THREE.PerspectiveCamera(50, width / height, 1, 50000);
-        camera.position.set(0, 0, 2400);
+        camera.position.set(0, -300, 2400);
 
         const controls = new OrbitControls(camera, renderer.domElement);
         controls.minDistance = 200; controls.maxDistance = 4000; controls.enableDamping = true;
@@ -200,6 +448,33 @@
         const volGroup = new THREE.Group();
         scene.add(volGroup);
 
+        // Reflective Floor Group
+        const floorGroup = new THREE.Group();
+        scene.add(floorGroup);
+        
+        // 1. Reflector (Mirror)
+        // Positioned at y = -800 (raised 50 units from -850)
+        // Size increased by 10x (5000 -> 50000)
+        const mirrorGeo = new THREE.PlaneGeometry(50000, 50000);
+        const groundMirror = new Reflector(mirrorGeo, {
+            clipBias: 0.003,
+            textureWidth: window.innerWidth * window.devicePixelRatio,
+            textureHeight: window.innerHeight * window.devicePixelRatio,
+            color: 0x111111 // Dark base for "black glossy" look
+        });
+        groundMirror.position.y = -800; 
+        groundMirror.rotateX(-Math.PI / 2);
+        floorGroup.add(groundMirror);
+        
+        // 2. Grid (Tiles)
+        // Positioned slightly above the mirror
+        // Size increased by 10x (5000 -> 50000), Divisions increased by 10x (50 -> 500) to keep cell density
+        const grid = new THREE.GridHelper(50000, 500, 0x222222, 0x222222);
+        grid.position.y = -799;
+        grid.material.transparent = true;
+        grid.material.opacity = 0.3;
+        floorGroup.add(grid);
+
         // Post-processing
         const target = new THREE.WebGLRenderTarget(width, height, { type: THREE.HalfFloatType, depthTexture: new THREE.DepthTexture(width, height), samples: 4 });
         const composer = new EffectComposer(renderer, target);
@@ -219,10 +494,22 @@
         composer.addPass(gtaoPass);
 
         const bokehPass = new BokehPass(scene, camera, { focus: 1980, aperture: 0.0001, maxblur: 0.01 });
+        
+        // Enhance Bokeh Quality (High Quality settings: Rings=5, Samples=8)
+        if (bokehPass.materialBokeh) {
+            bokehPass.materialBokeh.defines['RINGS'] = 5;
+            bokehPass.materialBokeh.defines['SAMPLES'] = 8;
+            bokehPass.materialBokeh.needsUpdate = true;
+        }
+
         composer.addPass(bokehPass);
 
         const bloomPass = new UnrealBloomPass(new THREE.Vector2(width, height), 1.5, 0.4, 0.85);
         composer.addPass(bloomPass);
+
+        // Noise Pass
+        const noisePass = new ShaderPass(NoiseShader);
+        composer.addPass(noisePass);
 
         const rgbPass = new ShaderPass(RGBShiftShader);
         rgbPass.uniforms['amount'].value = 0.001;
@@ -230,7 +517,7 @@
         
         composer.addPass(new OutputPass());
 
-        ctx.current = { renderer, scene, camera, controls, composer, ambLight, dirLight, hemiLight, volGroup, ssaoPass, gtaoPass, bokehPass, bloomPass, rgbPass, roomEnv };
+        ctx.current = { renderer, scene, camera, controls, composer, ambLight, dirLight, hemiLight, volGroup, floorGroup, ssaoPass, gtaoPass, bokehPass, bloomPass, noisePass, rgbPass, roomEnv };
 
         const onResize = () => {
           const w = window.innerWidth, h = window.innerHeight;
@@ -255,12 +542,16 @@
         if (!c.composer) return;
         
         const isPlaster = config.materialType === 'plaster';
+        const isWax = config.materialType === 'wax';
+
+        // Always apply user configured bloom strength
+        c.bloomPass.strength = config.bloomStrength;
 
         // Lighting Logic
-        if (isPlaster) {
-            c.ambLight.intensity = 0.2; 
-            c.dirLight.intensity = 2.0; 
-            c.hemiLight.intensity = 0.15; 
+        if (isPlaster || isWax) {
+            c.ambLight.intensity = isWax ? 0.3 : 0.2; 
+            c.dirLight.intensity = isWax ? 1.5 : 2.0; 
+            c.hemiLight.intensity = isWax ? 0.2 : 0.15; 
             c.scene.background = null; 
             c.ssaoPass.enabled = false;
             c.gtaoPass.enabled = true;
@@ -268,7 +559,6 @@
                 radius: 10, distanceExponent: 1, thickness: 5, scale: 1.5, samples: 32
             });
             c.bloomPass.enabled = true;
-            c.bloomPass.strength = 0.2; 
             c.bloomPass.radius = 0.5;
             c.bloomPass.threshold = 0.7; 
         } else {
@@ -282,7 +572,6 @@
             c.ssaoPass.maxDistance = config.ssaoMaxDist;
             c.gtaoPass.enabled = false;
             c.bloomPass.enabled = true;
-            c.bloomPass.strength = config.bloomStrength;
             c.bloomPass.radius = config.bloomRadius;
             c.bloomPass.threshold = config.bloomThreshold;
         }
@@ -322,6 +611,11 @@
             c.volGroup.visible = false;
         }
 
+        // Reflective Floor Visibility
+        if (c.floorGroup) {
+            c.floorGroup.visible = config.enableReflectiveFloor;
+        }
+
         // Fog Logic
         if (config.enableFog) {
             c.scene.fog = new THREE.Fog(0x000000, 1000, 4000);
@@ -339,6 +633,14 @@
 
         // RGB
         c.rgbPass.enabled = config.enableRGB;
+
+        // Noise
+        if (c.noisePass) {
+            c.noisePass.uniforms.uOpacity.value = config.noiseOpacity;
+            const modeMap = { 'overlay': 0, 'multiply': 1, 'additive': 2, 'softlight': 3 };
+            c.noisePass.uniforms.uBlendMode.value = modeMap[config.noiseBlendMode] || 0;
+        }
+
       }, [config]);
 
       // Recreate Mesh on Material/Resolution change
@@ -359,7 +661,29 @@
         };
 
         let material;
-        if (config.materialType === 'water') {
+        if (config.materialType === 'wax') {
+            // Realistic Wax Material without noise
+            material = new THREE.MeshPhysicalMaterial({
+                color: config.color,
+                metalness: 0.1,
+                roughness: 0.35, 
+                transmission: 0.5, // Increased transmission for better SSS look
+                thickness: 500, // Adjusted thickness to match scale roughly
+                ior: 1.44, 
+                side: THREE.DoubleSide,
+                envMapIntensity: 1.0,
+                clearcoat: 0.5,
+                clearcoatRoughness: 0.2,
+                attenuationDistance: 400, // Increased significantly so it's not black
+                attenuationColor: new THREE.Color(config.color).offsetHSL(0, 0.1, -0.1)
+            });
+
+            material.onBeforeCompile = (shader) => {
+              injectSlicing(shader);
+              material.userData.shader = shader;
+            };
+
+        } else if (config.materialType === 'water') {
             material = new THREE.MeshPhysicalMaterial({
                 color: config.color, metalness: 0.5, roughness: 0,
                 transmission: 1.0, thickness: 5, ior: 1.33,
@@ -418,6 +742,11 @@
           
           if (config.enableVolumeLights && c.volGroup.visible) {
              c.volGroup.rotation.y = -time * 0.1; // Rotate lights
+          }
+
+          // Update Noise Time
+          if (c.noisePass) {
+             c.noisePass.uniforms.uTime.value += 0.05;
           }
 
           if (c.mesh) {
@@ -479,6 +808,17 @@
             }
           }
           
+          // Dynamic Floor Collision
+          const dist = c.controls.getDistance();
+          const floorHeight = -800;
+          const safeHeight = floorHeight + 20; 
+          
+          if (dist > Math.abs(safeHeight)) {
+             c.controls.maxPolarAngle = Math.acos(safeHeight / dist);
+          } else {
+             c.controls.maxPolarAngle = Math.PI;
+          }
+
           c.controls.update();
           c.composer.render();
         };
@@ -495,7 +835,7 @@
     const App = () => {
       const [config, setConfig] = useState(DEFAULT_CONFIG);
       return (
-        <div className="relative w-full h-screen overflow-hidden font-sans">
+        <div className="relative w-full h-screen overflow-hidden">
           <ControlPanel config={config} setConfig={setConfig} />
           <ThreeScene config={config} />
         </div>
