@@ -3,48 +3,28 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no" />
-  <title>motion.</title>
+  <title>motion by cruel.tez</title>
   <script src="https://cdn.tailwindcss.com"></script>
   <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
   
-  <!-- Montserrat Font Import -->
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@300;400;500;600;700&display=swap" rel="stylesheet">
 
   <style>
     body { margin: 0; overflow: hidden; background-color: #000; color: #e2e8f0; font-family: 'Montserrat', sans-serif; }
-    
-    /* Ensure form elements inherit the font */
-    button, input, select, textarea {
-      font-family: inherit;
-    }
-
+    button, input, select, textarea { font-family: inherit; }
     canvas { display: block; touch-action: none; }
     .scrollbar-hide::-webkit-scrollbar { display: none; }
     .scrollbar-hide { -ms-overflow-style: none; scrollbar-width: none; }
     
-    /* Custom Range Slider Styling for Premium Feel */
-    input[type=range] {
-      -webkit-appearance: none; 
-      background: transparent; 
-    }
+    input[type=range] { -webkit-appearance: none; background: transparent; }
     input[type=range]::-webkit-slider-thumb {
-      -webkit-appearance: none;
-      height: 14px;
-      width: 14px;
-      border-radius: 50%;
-      background: #ffffff;
-      margin-top: -5px; 
-      box-shadow: 0 0 10px rgba(255,255,255,0.5);
-      cursor: pointer;
+      -webkit-appearance: none; height: 14px; width: 14px; border-radius: 50%;
+      background: #ffffff; margin-top: -5px; box-shadow: 0 0 10px rgba(255,255,255,0.5); cursor: pointer;
     }
     input[type=range]::-webkit-slider-runnable-track {
-      width: 100%;
-      height: 4px;
-      cursor: pointer;
-      background: rgba(255,255,255,0.1);
-      border-radius: 2px;
+      width: 100%; height: 4px; cursor: pointer; background: rgba(255,255,255,0.1); border-radius: 2px;
     }
   </style>
   <script type="importmap">
@@ -64,7 +44,7 @@
   <script type="text/babel" data-type="module">
     import React, { useState, useEffect, useRef } from 'react';
     import ReactDOM from 'react-dom/client';
-    import { Settings2, RotateCcw, X, ChevronDown } from 'lucide-react';
+    import { Settings2, RotateCcw, X, Lightbulb, Waves } from 'lucide-react';
     import * as THREE from 'three';
     import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls';
     import { MarchingCubes } from 'three/examples/jsm/objects/MarchingCubes';
@@ -74,6 +54,7 @@
     import { RenderPass } from 'three/examples/jsm/postprocessing/RenderPass';
     import { ShaderPass } from 'three/examples/jsm/postprocessing/ShaderPass';
     import { RGBShiftShader } from 'three/examples/jsm/shaders/RGBShiftShader';
+    import { FXAAShader } from 'three/examples/jsm/shaders/FXAAShader';
     import { OutputPass } from 'three/examples/jsm/postprocessing/OutputPass';
     import { UnrealBloomPass } from 'three/examples/jsm/postprocessing/UnrealBloomPass';
     import { BokehPass } from 'three/examples/jsm/postprocessing/BokehPass';
@@ -82,13 +63,84 @@
     import { RectAreaLightUniformsLib } from 'three/examples/jsm/lights/RectAreaLightUniformsLib.js';
     import { RectAreaLightHelper } from 'three/examples/jsm/helpers/RectAreaLightHelper.js';
 
-    // Custom Noise Shader
+    // Voronoi shader for generating water caustic effects
+    const CausticsShader = {
+      vertexShader: `
+        varying vec2 vUv;
+        void main() {
+          vUv = uv;
+          gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+        }
+      `,
+      fragmentShader: `
+        varying vec2 vUv;
+        uniform float uTime;
+        
+        // Pseudo-random 2D vector
+        vec2 hash2(vec2 p) {
+            p = vec2(dot(p, vec2(127.1, 311.7)), dot(p, vec2(269.5, 183.3)));
+            return fract(sin(p) * 43758.5453);
+        }
+
+        // Voronoi noise calculation
+        float voronoi(vec2 uv, float t) {
+            vec2 n = floor(uv);
+            vec2 f = fract(uv);
+            float m_dist = 1.0;
+            
+            // Iterate through 3x3 neighbor grid
+            for(int j=-1; j<=1; j++) {
+                for(int i=-1; i<=1; i++) {
+                    vec2 g = vec2(float(i), float(j));
+                    vec2 o = hash2(n + g);
+                    
+                    // Animate offset
+                    o = 0.5 + 0.5 * sin(t + 6.2831 * o);
+                    
+                    vec2 r = g + o - f;
+                    float d = dot(r, r);
+                    
+                    if(d < m_dist) m_dist = d;
+                }
+            }
+            return sqrt(m_dist);
+        }
+
+        void main() {
+            float time = uTime * 0.6;
+            vec2 uv = vUv * 6.0;
+            
+            // Dual-layer Voronoi for complexity
+            float v1 = voronoi(uv, time);
+            float v2 = voronoi(uv * 1.2 + vec2(4.0), time * 0.8 + 10.0);
+            
+            // Sharpen edges for web-like appearance
+            float i1 = smoothstep(0.0, 0.6, v1);
+            i1 = pow(i1, 16.0);
+            
+            float i2 = smoothstep(0.0, 0.6, v2);
+            i2 = pow(i2, 16.0);
+            
+            // Blend layers and boost intensity
+            float intensity = clamp((i1 * 0.6 + i2 * 0.4) * 4.0, 0.0, 1.0);
+            
+            // Apply cyan tint and deep blue ambient base
+            vec3 waterColor = vec3(0.1, 0.9, 0.9);
+            vec3 col = waterColor * intensity;
+            col += vec3(0.0, 0.1, 0.2) * 0.1;
+
+            gl_FragColor = vec4(col, 1.0);
+        }
+      `
+    };
+
+    // Custom noise shader for film grain and blending
     const NoiseShader = {
       uniforms: {
         tDiffuse: { value: null },
         uTime: { value: 0 },
         uOpacity: { value: 0 },
-        uBlendMode: { value: 0 } // 0: Overlay, 1: Multiply, 2: Additive, 3: SoftLight
+        uBlendMode: { value: 0 }
       },
       vertexShader: `
         varying vec2 vUv;
@@ -104,76 +156,63 @@
         uniform int uBlendMode;
         varying vec2 vUv;
 
-        // Gold Noise function - high quality, no patterns
-        float rand(vec2 xy) {
-            return fract(tan(distance(xy * 1.61803398874989484820459, xy) * uTime) * xy.x);
-        }
-        
-        // Backup standard hash if Gold Noise is too heavy or specific
         float randStandard(vec2 co) {
             return fract(sin(dot(co.xy ,vec2(12.9898,78.233))) * 43758.5453);
         }
 
         void main() {
             vec4 base = texture2D(tDiffuse, vUv);
-            
-            // Using a simpler robust hash for static-like noise
             vec2 seed = gl_FragCoord.xy * 0.01 + mod(uTime, 100.0);
             float noise = randStandard(seed * 100.0);
-
             vec3 result = base.rgb;
             
-            // 0: Overlay
-            if (uBlendMode == 0) {
+            if (uBlendMode == 0) { // Overlay
                 for (int i = 0; i < 3; i++) {
                     float b = base.rgb[i];
-                    if (b < 0.5) {
-                        result[i] = 2.0 * b * noise;
-                    } else {
-                        result[i] = 1.0 - 2.0 * (1.0 - b) * (1.0 - noise);
-                    }
+                    result[i] = (b < 0.5) ? 2.0 * b * noise : 1.0 - 2.0 * (1.0 - b) * (1.0 - noise);
                 }
-            }
-            // 1: Multiply
-            else if (uBlendMode == 1) {
+            } else if (uBlendMode == 1) { // Multiply
                 result = base.rgb * noise;
-            }
-            // 2: Additive
-            else if (uBlendMode == 2) {
+            } else if (uBlendMode == 2) { // Additive
                 result = base.rgb + noise;
-            }
-            // 3: SoftLight
-            else if (uBlendMode == 3) {
+            } else if (uBlendMode == 3) { // SoftLight
                 for (int i = 0; i < 3; i++) {
                     float b = base.rgb[i];
-                    float n = noise;
-                    result[i] = (1.0 - 2.0 * n) * b * b + 2.0 * n * b;
+                    result[i] = (1.0 - 2.0 * noise) * b * b + 2.0 * noise * b;
                 }
             }
-
-            // Apply opacity
             gl_FragColor = vec4(mix(base.rgb, result, uOpacity), base.a);
         }
       `
     };
 
     const DEFAULT_CONFIG = {
-      speed: 0.5, numBlobs: 32, resolution: 60, isolation: 35,
-      floor: false, // Standard MC floor (internal)
-      enableReflectiveFloor: true, // New Glossy Floor
-      wallX: false, wallZ: false,
-      color: '#ffaa33', ambientLightBrightness: 80, materialType: 'wax',
-      bloomStrength: 0.3, bloomRadius: 0.5, bloomThreshold: 0.9,
+      speed: 0.5, numBlobs: 60, blobSize: 1.0, resolution: 80, isolation: 80,
+      floor: false, floorType: 'mirror', wallX: false, wallZ: false,
+      color: '#ffffff', ambientLightBrightness: 80, materialType: 'wax',
+      bloomStrength: 0.05, bloomRadius: 0.5, bloomThreshold: 0.9,
       focus: 1980.0, aperture: 0.00001, maxBlur: 0.01,
       enableSSAO: true, ssaoRadius: 16, ssaoMinDist: 0.005, ssaoMaxDist: 0.1,
-      enableDoF: true, enableRGB: true, slicedMode: true,
+      enableDoF: true, enableRGB: true, enableAA: true, slicedMode: true,
       enableVolumeLights: true, enableFog: true,
-      noiseOpacity: 0.1, noiseBlendMode: 'softlight'
+      noiseOpacity: 0.02, noiseBlendMode: 'softlight',
+      // Environment Settings
+      enableEnvMap: false,
+      // Projector Settings
+      enableProjector: true,
+      projectorIntensity: 16.1,
+      projectorAngle: 1.4, // Approx 80 degrees
+      projectorPenumbra: 0.70,
+      projectorHeight: 3000,
+      projectorCaustics: true
     };
 
-    const Toggle = ({ label, checked, onChange }) => (
+    const Toggle = ({ label, checked, onChange, icon }) => (
       <label className="flex items-center justify-between cursor-pointer group py-2">
-        <span className="text-gray-300 text-xs font-medium group-hover:text-white transition-colors tracking-wide">{label}</span>
+        <div className="flex items-center gap-2">
+           {icon && <span className="text-gray-400 group-hover:text-white transition-colors">{icon}</span>}
+           <span className="text-gray-300 text-xs font-medium group-hover:text-white transition-colors tracking-wide">{label}</span>
+        </div>
         <div className="relative">
           <input type="checkbox" checked={checked} onChange={(e) => onChange(e.target.checked)} className="sr-only peer" />
           <div className="w-9 h-5 bg-white/10 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white/80 after:border-gray-300 after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-indigo-600 peer-checked:after:bg-white shadow-inner"></div>
@@ -181,11 +220,13 @@
       </label>
     );
 
-    const ControlPanel = ({ config, setConfig }) => {
+    const ControlPanel = ({ config, setConfig, cameraStats }) => {
       const [isOpen, setIsOpen] = useState(false);
       const [isMobile, setIsMobile] = useState(false);
       const [isColorActive, setIsColorActive] = useState(false);
+      const [isButtonVisible, setIsButtonVisible] = useState(true);
       const isHovering = useRef(false);
+      const buttonTimer = useRef(null);
       
       useEffect(() => {
         const check = () => setIsMobile(window.innerWidth < 768);
@@ -194,9 +235,22 @@
         return () => window.removeEventListener('resize', check);
       }, []);
 
+      // Auto-hide settings button after 7 seconds
+      useEffect(() => {
+        if (!isOpen) {
+             if (buttonTimer.current) clearTimeout(buttonTimer.current);
+             buttonTimer.current = setTimeout(() => {
+                 setIsButtonVisible(false);
+             }, 7000);
+        } else {
+             if (buttonTimer.current) clearTimeout(buttonTimer.current);
+             setIsButtonVisible(true);
+        }
+        return () => { if (buttonTimer.current) clearTimeout(buttonTimer.current); };
+      }, [isOpen]);
+
       const update = (k, v) => setConfig(p => ({ ...p, [k]: v }));
 
-      // Dark Premium Theme Classes
       const panelClasses = isMobile 
         ? `fixed inset-0 z-[60] bg-[#050505]/95 backdrop-blur-xl p-6 overflow-y-auto transition-transform duration-500 cubic-bezier(0.16, 1, 0.3, 1) ${isOpen ? 'translate-y-0' : 'translate-y-full'}`
         : `absolute top-6 left-6 w-80 bg-[#080808]/60 backdrop-blur-2xl border border-white/5 rounded-2xl p-6 shadow-[0_20px_50px_-12px_rgba(0,0,0,1)] text-sm z-50 max-h-[90vh] overflow-y-auto transition-all duration-500 cubic-bezier(0.16, 1, 0.3, 1) scrollbar-hide ${isOpen ? 'opacity-100 pointer-events-auto translate-x-0' : 'opacity-0 pointer-events-none -translate-x-4'}`;
@@ -209,25 +263,25 @@
       return (
         <>
           <div 
-            className="absolute top-6 left-6 z-40"
-            onMouseEnter={() => !isMobile && setIsOpen(true)}
+            className="absolute top-6 left-6 z-40" 
+            onMouseEnter={() => {
+                setIsButtonVisible(true);
+                if (buttonTimer.current) clearTimeout(buttonTimer.current);
+                if (!isMobile) setIsOpen(true);
+            }}
+            onMouseLeave={() => {
+                if (!isOpen) {
+                     if (buttonTimer.current) clearTimeout(buttonTimer.current);
+                     buttonTimer.current = setTimeout(() => setIsButtonVisible(false), 7000);
+                }
+            }}
           >
-             <button 
-               onClick={() => setIsOpen(true)}
-               className={`p-3 rounded-2xl bg-black/40 backdrop-blur-xl border border-white/10 text-white shadow-2xl transition-all duration-300 hover:bg-black/60 hover:scale-105 active:scale-95 group ${(isOpen && !isMobile) ? 'opacity-0 pointer-events-none' : 'opacity-100'}`}
-             >
+             <button onClick={() => setIsOpen(true)} className={`p-3 rounded-2xl bg-black/40 backdrop-blur-xl border border-white/10 text-white shadow-2xl transition-all duration-300 hover:bg-black/60 hover:scale-105 active:scale-95 group ${(isOpen && !isMobile) ? 'opacity-0 pointer-events-none' : (isButtonVisible ? 'opacity-100' : 'opacity-0')}`}>
                <Settings2 size={20} className="group-hover:rotate-90 transition-transform duration-700" />
              </button>
           </div>
 
-          <div 
-            className={panelClasses}
-            onMouseEnter={() => { isHovering.current = true; }}
-            onMouseLeave={() => { 
-                isHovering.current = false;
-                if (!isMobile && !isColorActive) setIsOpen(false);
-            }}
-          >
+          <div className={panelClasses} onMouseEnter={() => { isHovering.current = true; }} onMouseLeave={() => { isHovering.current = false; if (!isMobile && !isColorActive) setIsOpen(false); }}>
             <div className="flex justify-between mb-8 items-center">
               <div className="flex gap-3 items-center">
                 <div className="p-1.5 bg-indigo-500/10 rounded-lg border border-indigo-500/20">
@@ -236,11 +290,7 @@
                 <h2 className="font-semibold text-white tracking-wide text-sm">CONFIGURATION</h2>
               </div>
               <div className="flex gap-2 items-center">
-                <button 
-                  onClick={() => setConfig(DEFAULT_CONFIG)} 
-                  className="p-2 rounded-full hover:bg-white/10 transition-colors text-gray-400 hover:text-white"
-                  title="Reset to Defaults"
-                >
+                <button onClick={() => setConfig(DEFAULT_CONFIG)} className="p-2 rounded-full hover:bg-white/10 transition-colors text-gray-400 hover:text-white" title="Reset to Defaults">
                   <RotateCcw size={14} />
                 </button>
                 {isMobile && (
@@ -254,10 +304,10 @@
             <div className="pb-4">
               <div className={sectionClass}>
                 <label className={labelClass}>Material Definition</label>
-                <div className="grid grid-cols-2 gap-2">
-                  {['wax', 'water', 'plaster', 'striped'].map(type => (
+                <div className="grid grid-cols-4 gap-2">
+                  {['wax', 'water', 'plaster', 'lines'].map(type => (
                     <button key={type} onClick={() => update('materialType', type)} 
-                      className={`py-2.5 rounded-lg text-[11px] font-medium uppercase tracking-wider transition-all duration-300 border ${config.materialType === type ? 'bg-indigo-600/90 border-indigo-500/50 text-white shadow-lg shadow-indigo-900/50' : 'bg-white/5 border-transparent text-gray-400 hover:bg-white/10 hover:text-gray-200'}`}>
+                      className={`py-2.5 rounded-lg text-[10px] font-medium uppercase tracking-wider transition-all duration-300 border ${config.materialType === type ? 'bg-indigo-600/90 border-indigo-500/50 text-white shadow-lg shadow-indigo-900/50' : 'bg-white/5 border-transparent text-gray-400 hover:bg-white/10 hover:text-gray-200'}`}>
                       {type}
                     </button>
                   ))}
@@ -268,17 +318,7 @@
                 <label className={labelClass}>Base Chromaticity</label>
                 <div className="flex items-center gap-3 p-1 pr-3 rounded-xl border border-white/5 bg-white/[0.02]">
                   <div className="relative overflow-hidden w-8 h-8 rounded-lg shadow-inner">
-                    <input 
-                      type="color" 
-                      value={config.color} 
-                      onChange={(e) => update('color', e.target.value)} 
-                      onFocus={() => setIsColorActive(true)}
-                      onBlur={() => {
-                        setIsColorActive(false);
-                        if (!isMobile && !isHovering.current) setIsOpen(false);
-                      }}
-                      className="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 w-[150%] h-[150%] cursor-pointer border-none p-0" 
-                    />
+                    <input type="color" value={config.color} onChange={(e) => update('color', e.target.value)} onFocus={() => setIsColorActive(true)} onBlur={() => { setIsColorActive(false); if (!isMobile && !isHovering.current) setIsOpen(false); }} className="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 w-[150%] h-[150%] cursor-pointer border-none p-0" />
                   </div>
                   <span className="font-mono text-xs text-gray-300 flex-1 text-center">{config.color.toUpperCase()}</span>
                 </div>
@@ -287,12 +327,70 @@
               <hr className={borderClass} />
               
               <div className={sectionClass}>
+                <label className={labelClass}>Projector Light</label>
+                <div className="space-y-4">
+                  <Toggle label="Enable Projector" checked={config.enableProjector} onChange={(v) => update('enableProjector', v)} icon={<Lightbulb size={12} />} />
+                  
+                  {config.enableProjector && (
+                    <div className="pl-2 border-l-2 border-white/10 space-y-4 animate-in fade-in slide-in-from-top-2 duration-300">
+                      <div>
+                        <div className="flex justify-between text-xs mb-1">
+                          <span className="text-gray-400">Brightness</span>
+                          <span className={valueClass}>{config.projectorIntensity.toFixed(1)}</span>
+                        </div>
+                        <input type="range" min="0" max="20" step="0.1" value={config.projectorIntensity} onChange={(e) => update('projectorIntensity', +e.target.value)} className="w-full" />
+                      </div>
+
+                      <div>
+                        <div className="flex justify-between text-xs mb-1">
+                          <span className="text-gray-400">Beam Angle</span>
+                          <span className={valueClass}>{(config.projectorAngle * 57.29).toFixed(0)}°</span>
+                        </div>
+                        <input type="range" min="0.1" max="1.57" step="0.01" value={config.projectorAngle} onChange={(e) => update('projectorAngle', +e.target.value)} className="w-full" />
+                      </div>
+
+                      <div>
+                        <div className="flex justify-between text-xs mb-1">
+                          <span className="text-gray-400">Focus (Softness)</span>
+                          <span className={valueClass}>{config.projectorPenumbra.toFixed(2)}</span>
+                        </div>
+                        <input type="range" min="0" max="1" step="0.01" value={config.projectorPenumbra} onChange={(e) => update('projectorPenumbra', +e.target.value)} className="w-full" />
+                      </div>
+
+                       <div>
+                        <div className="flex justify-between text-xs mb-1">
+                          <span className="text-gray-400">Height</span>
+                          <span className={valueClass}>{config.projectorHeight.toFixed(0)}</span>
+                        </div>
+                        <input type="range" min="500" max="5500" step="50" value={config.projectorHeight} onChange={(e) => update('projectorHeight', +e.target.value)} className="w-full" />
+                      </div>
+                      
+                      <Toggle label="Caustics" checked={config.projectorCaustics} onChange={(v) => update('projectorCaustics', v)} icon={<Waves size={12} />} />
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              <hr className={borderClass} />
+              
+              <div className={sectionClass}>
                 <label className={labelClass}>Scene Effects</label>
                 <div className="space-y-1">
+                   <div className="mb-2">
+                      <label className="text-[10px] font-bold tracking-[0.2em] text-gray-500 uppercase mb-2 block">Floor Type</label>
+                      <div className="grid grid-cols-2 gap-2">
+                         {['none', 'mirror'].map(type => (
+                            <button key={type} onClick={() => update('floorType', type)} 
+                               className={`py-2 rounded-lg text-[10px] font-medium uppercase tracking-wider transition-all duration-300 border ${config.floorType === type ? 'bg-indigo-600/90 border-indigo-500/50 text-white shadow-lg shadow-indigo-900/50' : 'bg-white/5 border-transparent text-gray-400 hover:bg-white/10 hover:text-gray-200'}`}>
+                               {type}
+                            </button>
+                         ))}
+                      </div>
+                   </div>
+                   <Toggle label="Environment Lighting" checked={config.enableEnvMap} onChange={(v) => update('enableEnvMap', v)} />
                    <Toggle label="Sliced Mode" checked={config.slicedMode} onChange={(v) => update('slicedMode', v)} />
-                   <Toggle label="Volume Lights" checked={config.enableVolumeLights} onChange={(v) => update('enableVolumeLights', v)} />
+                   <Toggle label="RGB Lights" checked={config.enableVolumeLights} onChange={(v) => update('enableVolumeLights', v)} />
                    <Toggle label="Volumetric Fog" checked={config.enableFog} onChange={(v) => update('enableFog', v)} />
-                   <Toggle label="Reflective Floor" checked={config.enableReflectiveFloor} onChange={(v) => update('enableReflectiveFloor', v)} />
                 </div>
               </div>
 
@@ -317,9 +415,7 @@
                  
                  <div className="grid grid-cols-4 gap-1">
                   {['overlay', 'multiply', 'additive', 'softlight'].map(mode => (
-                      <button key={mode} onClick={() => update('noiseBlendMode', mode)}
-                          title={mode}
-                          className={`py-2 rounded text-[10px] uppercase font-bold transition-all ${config.noiseBlendMode === mode ? 'bg-white/20 text-white' : 'bg-transparent text-gray-600 hover:text-gray-400'}`}>
+                      <button key={mode} onClick={() => update('noiseBlendMode', mode)} title={mode} className={`py-2 rounded text-[10px] uppercase font-bold transition-all ${config.noiseBlendMode === mode ? 'bg-white/20 text-white' : 'bg-transparent text-gray-600 hover:text-gray-400'}`}>
                           {mode.slice(0,3)}
                       </button>
                   ))}
@@ -347,26 +443,17 @@
                 <label className={labelClass}>Post Processing</label>
                 <div className="space-y-1">
                    <Toggle label="Depth of Field" checked={config.enableDoF} onChange={(v) => update('enableDoF', v)} />
-                   
                    {config.enableDoF && (
                       <div className="mt-2 mb-3 pl-2 animate-in fade-in slide-in-from-top-1 duration-300 border-l-2 border-white/10">
-                         <div className="flex justify-between text-[10px] text-gray-500 mb-1">
-                            <span>Focus Distance</span>
-                            <span className={valueClass}>{config.focus.toFixed(0)}</span>
-                         </div>
-                         <input 
-                           type="range" 
-                           min="10" 
-                           max="3000" 
-                           step="10" 
-                           value={config.focus} 
-                           onChange={(e) => update('focus', +e.target.value)} 
-                           className="w-full" 
-                         />
+                         <div className="flex justify-between text-[10px] text-gray-500 mb-1"><span>Focus Distance</span><span className={valueClass}>{config.focus.toFixed(0)}</span></div>
+                         <input type="range" min="10" max="3000" step="10" value={config.focus} onChange={(e) => update('focus', +e.target.value)} className="w-full mb-2" />
+                         
+                         <div className="flex justify-between text-[10px] text-gray-500 mb-1"><span>Effect Strength</span><span className={valueClass}>{(config.aperture * 10000).toFixed(2)}</span></div>
+                         <input type="range" min="0" max="0.0002" step="0.000001" value={config.aperture} onChange={(e) => update('aperture', +e.target.value)} className="w-full" />
                       </div>
                    )}
-
                    <Toggle label="RGB Shift" checked={config.enableRGB} onChange={(v) => update('enableRGB', v)} />
+                   <Toggle label="Anti-Aliasing (FXAA)" checked={config.enableAA} onChange={(v) => update('enableAA', v)} />
                 </div>
               </div>
 
@@ -375,7 +462,9 @@
               <div className="space-y-5">
                 {[
                   { label: 'Speed', key: 'speed', min: 0, max: 5, step: 0.1, fmt: v => v.toFixed(1) + 'x' },
-                  { label: 'Resolution', key: 'resolution', min: 10, max: 100, step: 1, fmt: v => v }
+                  { label: 'Blob Count', key: 'numBlobs', min: 5, max: 100, step: 1, fmt: v => v },
+                  { label: 'Blob Size', key: 'blobSize', min: 0.1, max: 3.0, step: 0.1, fmt: v => v.toFixed(1) + 'x' },
+                  { label: 'Resolution', key: 'resolution', min: 10, max: 200, step: 1, fmt: v => v }
                 ].map(ctrl => (
                   <div key={ctrl.key}>
                     <div className="flex justify-between text-xs mb-2">
@@ -386,9 +475,20 @@
                   </div>
                 ))}
               </div>
+
+              <div className="mt-8 pt-4 border-t border-white/5 space-y-1">
+                 <div className="flex justify-between text-[10px] text-gray-500 font-mono">
+                    <span>CAM POS</span>
+                    <span className="text-indigo-400">{cameraStats.x}, {cameraStats.y}, {cameraStats.z}</span>
+                 </div>
+                 <div className="flex justify-between text-[10px] text-gray-500 font-mono">
+                    <span>ZOOM</span>
+                    <span className="text-indigo-400">{cameraStats.zoom}</span>
+                 </div>
+              </div>
               
-              <div className="mt-8 text-[10px] text-center text-gray-700 font-medium tracking-widest uppercase opacity-50">
-                Render Engine v2.0
+              <div className="mt-4 text-[10px] text-center text-gray-700 font-medium tracking-widest uppercase opacity-50">
+                cruel.tez
               </div>
             </div>
           </div>
@@ -396,21 +496,24 @@
       );
     };
 
-    const ThreeScene = ({ config }) => {
+    const ThreeScene = ({ config, setCameraStats }) => {
       const containerRef = useRef(null);
-      const ctx = useRef({}); // Context to store refs
+      const ctx = useRef({});
+      const configRef = useRef(config);
 
-      // Initialize Scene
+      useEffect(() => {
+        configRef.current = config;
+      }, [config]);
+
       useEffect(() => {
         if (!containerRef.current) return;
         
-        // Init RectAreaLight Uniforms
         RectAreaLightUniformsLib.init();
 
         const width = window.innerWidth, height = window.innerHeight;
         
         const renderer = new THREE.WebGLRenderer({ antialias: false, alpha: true, preserveDrawingBuffer: true });
-        renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2)); // Limit pixel ratio for mobile performance
+        renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
         renderer.setSize(width, height);
         renderer.shadowMap.enabled = true;
         renderer.shadowMap.type = THREE.PCFSoftShadowMap;
@@ -421,7 +524,6 @@
         const scene = new THREE.Scene();
         const pmrem = new THREE.PMREMGenerator(renderer);
         const roomEnv = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
-        scene.environment = roomEnv;
         pmrem.dispose();
 
         const camera = new THREE.PerspectiveCamera(50, width / height, 1, 50000);
@@ -434,7 +536,7 @@
         dirLight.position.set(0, 2000, 0);
         dirLight.castShadow = true;
         Object.assign(dirLight.shadow.camera, { near: 0.5, far: 5000, left: -1000, right: 1000, top: 1000, bottom: -1000 });
-        dirLight.shadow.mapSize.set(2048, 2048);
+        dirLight.shadow.mapSize.set(4096, 4096);
         scene.add(dirLight);
 
         const ambLight = new THREE.AmbientLight(0xffffff, 0.2);
@@ -443,39 +545,44 @@
         const hemiLight = new THREE.HemisphereLight(0xffffff, 0x444444, 0.0);
         hemiLight.position.set(0, 2000, 0);
         scene.add(hemiLight);
+        
+        // Spotlight setup for projection effects
+        const spotLight = new THREE.SpotLight(0xffffff, 1000);
+        spotLight.position.set(0, 1000, 0);
+        spotLight.angle = 0.5;
+        spotLight.penumbra = 0.2;
+        spotLight.decay = 0; 
+        spotLight.distance = 0; 
+        spotLight.castShadow = true;
+        spotLight.shadow.mapSize.width = 2048;
+        spotLight.shadow.mapSize.height = 2048;
+        spotLight.shadow.bias = -0.0001;
+        spotLight.shadow.camera.near = 100;
+        spotLight.shadow.camera.far = 4000;
+        spotLight.target.position.set(0, 0, 0);
+        
+        scene.add(spotLight);
+        scene.add(spotLight.target); 
 
-        // Volume Lights Group
+        // Off-screen scene for generating caustics
+        const causticsTarget = new THREE.WebGLRenderTarget(512, 512);
+        const causticsScene = new THREE.Scene();
+        const causticsCamera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
+        const causticsMaterial = new THREE.ShaderMaterial({
+             uniforms: { uTime: { value: 0 } },
+             vertexShader: CausticsShader.vertexShader,
+             fragmentShader: CausticsShader.fragmentShader
+        });
+        const causticsQuad = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), causticsMaterial);
+        causticsScene.add(causticsQuad);
+
         const volGroup = new THREE.Group();
         scene.add(volGroup);
 
-        // Reflective Floor Group
         const floorGroup = new THREE.Group();
         scene.add(floorGroup);
         
-        // 1. Reflector (Mirror)
-        // Positioned at y = -800 (raised 50 units from -850)
-        // Size increased by 10x (5000 -> 50000)
-        const mirrorGeo = new THREE.PlaneGeometry(50000, 50000);
-        const groundMirror = new Reflector(mirrorGeo, {
-            clipBias: 0.003,
-            textureWidth: window.innerWidth * window.devicePixelRatio,
-            textureHeight: window.innerHeight * window.devicePixelRatio,
-            color: 0x111111 // Dark base for "black glossy" look
-        });
-        groundMirror.position.y = -800; 
-        groundMirror.rotateX(-Math.PI / 2);
-        floorGroup.add(groundMirror);
-        
-        // 2. Grid (Tiles)
-        // Positioned slightly above the mirror
-        // Size increased by 10x (5000 -> 50000), Divisions increased by 10x (50 -> 500) to keep cell density
-        const grid = new THREE.GridHelper(50000, 500, 0x222222, 0x222222);
-        grid.position.y = -799;
-        grid.material.transparent = true;
-        grid.material.opacity = 0.3;
-        floorGroup.add(grid);
-
-        // Post-processing
+        // Post-processing setup
         const target = new THREE.WebGLRenderTarget(width, height, { type: THREE.HalfFloatType, depthTexture: new THREE.DepthTexture(width, height), samples: 4 });
         const composer = new EffectComposer(renderer, target);
         
@@ -484,30 +591,24 @@
         renderPass.clearAlpha = 0;
         composer.addPass(renderPass);
 
-        // SSAO - Standard
         const ssaoPass = new SSAOPass(scene, camera, width, height);
         composer.addPass(ssaoPass);
         
-        // GTAO - High Quality
         const gtaoPass = new GTAOPass(scene, camera, width, height);
         gtaoPass.enabled = false;
         composer.addPass(gtaoPass);
 
         const bokehPass = new BokehPass(scene, camera, { focus: 1980, aperture: 0.0001, maxblur: 0.01 });
-        
-        // Enhance Bokeh Quality (High Quality settings: Rings=5, Samples=8)
         if (bokehPass.materialBokeh) {
             bokehPass.materialBokeh.defines['RINGS'] = 5;
             bokehPass.materialBokeh.defines['SAMPLES'] = 8;
             bokehPass.materialBokeh.needsUpdate = true;
         }
-
         composer.addPass(bokehPass);
 
         const bloomPass = new UnrealBloomPass(new THREE.Vector2(width, height), 1.5, 0.4, 0.85);
         composer.addPass(bloomPass);
 
-        // Noise Pass
         const noisePass = new ShaderPass(NoiseShader);
         composer.addPass(noisePass);
 
@@ -517,7 +618,20 @@
         
         composer.addPass(new OutputPass());
 
-        ctx.current = { renderer, scene, camera, controls, composer, ambLight, dirLight, hemiLight, volGroup, floorGroup, ssaoPass, gtaoPass, bokehPass, bloomPass, noisePass, rgbPass, roomEnv };
+        const fxaaPass = new ShaderPass(FXAAShader);
+        const pixelRatio = renderer.getPixelRatio();
+        fxaaPass.material.uniforms['resolution'].value.x = 1 / (width * pixelRatio);
+        fxaaPass.material.uniforms['resolution'].value.y = 1 / (height * pixelRatio);
+        composer.addPass(fxaaPass);
+
+        ctx.current = { 
+            renderer, scene, camera, controls, composer, 
+            ambLight, dirLight, hemiLight, spotLight, 
+            volGroup, floorGroup, 
+            ssaoPass, gtaoPass, bokehPass, bloomPass, noisePass, rgbPass, fxaaPass, 
+            roomEnv,
+            causticsTarget, causticsScene, causticsCamera, causticsMaterial
+        };
 
         const onResize = () => {
           const w = window.innerWidth, h = window.innerHeight;
@@ -525,6 +639,11 @@
           renderer.setSize(w, h); composer.setSize(w, h);
           ssaoPass.setSize(w, h);
           gtaoPass.setSize(w, h);
+          if(ctx.current.fxaaPass) {
+             const pxRatio = renderer.getPixelRatio();
+             ctx.current.fxaaPass.material.uniforms['resolution'].value.x = 1 / (w * pxRatio);
+             ctx.current.fxaaPass.material.uniforms['resolution'].value.y = 1 / (h * pxRatio);
+          }
         };
         window.addEventListener('resize', onResize);
 
@@ -533,38 +652,78 @@
           renderer.dispose();
           containerRef.current?.removeChild(renderer.domElement);
           if (ctx.current.animId) cancelAnimationFrame(ctx.current.animId);
+          causticsTarget.dispose();
         };
       }, []);
 
-      // Update Uniforms & Pass States
+      useEffect(() => {
+        const c = ctx.current;
+        if (!c.floorGroup || !c.scene) return;
+
+        // Reset floor group
+        while (c.floorGroup.children.length > 0) {
+            const child = c.floorGroup.children[0];
+            c.floorGroup.remove(child);
+            if (child.geometry) child.geometry.dispose();
+            if (child.material) {
+                if (Array.isArray(child.material)) child.material.forEach(m => m.dispose());
+                else child.material.dispose();
+            }
+        }
+
+        if (config.floorType === 'mirror') {
+             const mirrorGeo = new THREE.PlaneGeometry(50000, 50000);
+             const groundMirror = new Reflector(mirrorGeo, {
+                clipBias: 0.003,
+                textureWidth: window.innerWidth * window.devicePixelRatio,
+                textureHeight: window.innerHeight * window.devicePixelRatio,
+                color: 0x000000
+             });
+             groundMirror.position.y = -800; 
+             groundMirror.rotateX(-Math.PI / 2);
+             c.floorGroup.add(groundMirror);
+             
+             // High-contrast grid for visual reference
+             const grid = new THREE.GridHelper(50000, 500, 0x111111, 0x111111);
+             grid.position.y = -799;
+             grid.material.transparent = true;
+             grid.material.opacity = 0.5;
+             c.floorGroup.add(grid);
+        }
+      }, [config.floorType]);
+
       useEffect(() => {
         const c = ctx.current;
         if (!c.composer) return;
         
         const isPlaster = config.materialType === 'plaster';
         const isWax = config.materialType === 'wax';
+        const isLines = config.materialType === 'lines';
 
-        // Always apply user configured bloom strength
         c.bloomPass.strength = config.bloomStrength;
 
-        // Lighting Logic
-        if (isPlaster || isWax) {
-            c.ambLight.intensity = isWax ? 0.3 : 0.2; 
-            c.dirLight.intensity = isWax ? 1.5 : 2.0; 
-            c.hemiLight.intensity = isWax ? 0.2 : 0.15; 
+        // Configure lighting based on material properties
+        let ambIntensity = 0;
+        let dirIntensity = 0;
+        let hemiIntensity = 0;
+
+        if (isPlaster || isWax || isLines) {
+            ambIntensity = isLines ? 0.8 : (isWax ? 0.3 : 0.2); 
+            dirIntensity = isLines ? 0.5 : (isWax ? 1.5 : 2.0); 
+            hemiIntensity = isLines ? 0.0 : (isWax ? 0.2 : 0.15); 
+            
             c.scene.background = null; 
             c.ssaoPass.enabled = false;
             c.gtaoPass.enabled = true;
-            c.gtaoPass.updateGtaoMaterial({ 
-                radius: 10, distanceExponent: 1, thickness: 5, scale: 1.5, samples: 32
-            });
+            c.gtaoPass.updateGtaoMaterial({ radius: 10, distanceExponent: 1, thickness: 5, scale: 1.5, samples: 32 });
             c.bloomPass.enabled = true;
-            c.bloomPass.radius = 0.5;
-            c.bloomPass.threshold = 0.7; 
+            c.bloomPass.radius = isLines ? 0.3 : 0.5;
+            c.bloomPass.threshold = isLines ? 1.1 : 0.7; 
         } else {
-            c.ambLight.intensity = config.ambientLightBrightness * 0.01;
-            c.dirLight.intensity = 0.5;
-            c.hemiLight.intensity = 0.0;
+            ambIntensity = config.ambientLightBrightness * 0.01;
+            dirIntensity = 0.5;
+            hemiIntensity = 0.0;
+            
             c.scene.background = null; 
             c.ssaoPass.enabled = config.enableSSAO;
             c.ssaoPass.kernelRadius = config.ssaoRadius;
@@ -576,65 +735,58 @@
             c.bloomPass.threshold = config.bloomThreshold;
         }
 
-        // Volume Lights Logic
         if (config.enableVolumeLights) {
-            // Darken scene to make lights pop
-            c.ambLight.intensity = 0.05;
-            c.dirLight.intensity = 0.05;
-            c.hemiLight.intensity = 0.0;
-
-            // Populate volume lights if empty
+            ambIntensity = 0.05; 
+            dirIntensity = 0.05; 
+            hemiIntensity = 0.0;
+            
             if (c.volGroup.children.length === 0) {
-                const width = 600;
-                const height = 600; // Square
-                const intensity = 70.0; // Reduced from 100.0 (30% less)
-                const dist = 1200; // Further out
-
-                const createVolumetricLight = (color, x, z, yRot) => {
-                    const rectLight = new THREE.RectAreaLight(color, intensity, width, height);
-                    rectLight.position.set(x, 0, z); // Centered vertically
-                    
-                    // Only the light source remains
-                    
-                    rectLight.lookAt(0, 0, 0); // Face center
-                    return rectLight;
+                const width = 600, height = 600, intensity = 70.0, dist = 1200;
+                const createLight = (color, x, z) => {
+                    const l = new THREE.RectAreaLight(color, intensity, width, height);
+                    l.position.set(x, 0, z); l.lookAt(0, 0, 0); return l;
                 };
-
-                const red = createVolumetricLight(0xff0000, dist, 0);
-                const green = createVolumetricLight(0x00ff00, -dist/2, dist*0.866);
-                const blue = createVolumetricLight(0x0000ff, -dist/2, -dist*0.866);
-
-                c.volGroup.add(red, green, blue);
+                c.volGroup.add(createLight(0xff0000, dist, 0), createLight(0x00ff00, -dist/2, dist*0.866), createLight(0x0000ff, -dist/2, -dist*0.866));
             }
             c.volGroup.visible = true;
         } else {
             c.volGroup.visible = false;
         }
 
-        // Reflective Floor Visibility
-        if (c.floorGroup) {
-            c.floorGroup.visible = config.enableReflectiveFloor;
+        // Projector override
+        if (config.enableProjector) {
+            ambIntensity = 0.0;
+            dirIntensity = 0.0;
+            hemiIntensity = 0.0;
+            c.volGroup.visible = false;
         }
+        
+        c.scene.environment = config.enableEnvMap ? c.roomEnv : null;
 
-        // Fog Logic
-        if (config.enableFog) {
-            c.scene.fog = new THREE.Fog(0x000000, 1000, 4000);
-            c.scene.background = null; 
-        } else {
-            c.scene.fog = null;
-            c.scene.background = null;
+        c.ambLight.intensity = ambIntensity;
+        c.dirLight.intensity = dirIntensity;
+        c.hemiLight.intensity = hemiIntensity;
+        
+        if (c.spotLight) {
+            c.spotLight.visible = config.enableProjector;
+            if (config.enableProjector) {
+               c.spotLight.intensity = config.projectorIntensity;
+               c.spotLight.angle = config.projectorAngle;
+               c.spotLight.penumbra = config.projectorPenumbra;
+               c.spotLight.position.setY(config.projectorHeight);
+            }
         }
-
-        // DoF
+        
+        c.scene.fog = config.enableFog ? new THREE.Fog(0x000000, 1000, 4000) : null;
+        
         c.bokehPass.enabled = config.enableDoF;
         c.bokehPass.uniforms.focus.value = config.focus;
         c.bokehPass.uniforms.aperture.value = config.aperture;
         c.bokehPass.uniforms.maxblur.value = config.maxBlur;
 
-        // RGB
         c.rgbPass.enabled = config.enableRGB;
+        if (c.fxaaPass) c.fxaaPass.enabled = config.enableAA;
 
-        // Noise
         if (c.noisePass) {
             c.noisePass.uniforms.uOpacity.value = config.noiseOpacity;
             const modeMap = { 'overlay': 0, 'multiply': 1, 'additive': 2, 'softlight': 3 };
@@ -643,7 +795,6 @@
 
       }, [config]);
 
-      // Recreate Mesh on Material/Resolution change
       useEffect(() => {
         const c = ctx.current;
         if (!c.scene) return;
@@ -655,69 +806,55 @@
         }
 
         const injectSlicing = (shader) => {
-          shader.uniforms.uSliced = { value: config.slicedMode ? 1.0 : 0.0 };
-          shader.vertexShader = `varying vec3 vPos;\n` + shader.vertexShader.replace('#include <begin_vertex>', '#include <begin_vertex>\nvPos = position;');
-          shader.fragmentShader = `uniform float uSliced;\nvarying vec3 vPos;\n` + shader.fragmentShader.replace('void main() {', 'void main() {\n if (uSliced > 0.5 && smoothstep(0.98, 1.0, sin(vPos.y * 200.0)) < 0.1) discard;');
+            shader.uniforms.uSliced = { value: config.slicedMode ? 1.0 : 0.0 };
+            shader.vertexShader = `varying vec3 vPos;\n` + shader.vertexShader.replace('#include <begin_vertex>', '#include <begin_vertex>\nvPos = position;');
+            shader.fragmentShader = `uniform float uSliced;\nvarying vec3 vPos;\n` + shader.fragmentShader.replace('void main() {', 'void main() {\n if (uSliced > 0.5) { float y = vPos.y * 800.0 + 400.0; if (mod(y, 30.0) > 5.0) discard; }');
         };
 
         let material;
         if (config.materialType === 'wax') {
-            // Realistic Wax Material without noise
             material = new THREE.MeshPhysicalMaterial({
-                color: config.color,
-                metalness: 0.1,
-                roughness: 0.35, 
-                transmission: 0.5, // Increased transmission for better SSS look
-                thickness: 500, // Adjusted thickness to match scale roughly
-                ior: 1.44, 
-                side: THREE.DoubleSide,
-                envMapIntensity: 1.0,
-                clearcoat: 0.5,
-                clearcoatRoughness: 0.2,
-                attenuationDistance: 400, // Increased significantly so it's not black
-                attenuationColor: new THREE.Color(config.color).offsetHSL(0, 0.1, -0.1)
+                color: config.color, metalness: 0.1, roughness: 0.35, transmission: 0.5, thickness: 500, ior: 1.44, side: THREE.DoubleSide, envMapIntensity: 1.0, clearcoat: 0.5, clearcoatRoughness: 0.2, attenuationDistance: 400, attenuationColor: new THREE.Color(config.color).offsetHSL(0, 0.1, -0.1)
             });
-
-            material.onBeforeCompile = (shader) => {
-              injectSlicing(shader);
-              material.userData.shader = shader;
-            };
-
+            material.onBeforeCompile = (shader) => { injectSlicing(shader); material.userData.shader = shader; };
         } else if (config.materialType === 'water') {
             material = new THREE.MeshPhysicalMaterial({
-                color: config.color, metalness: 0.5, roughness: 0,
-                transmission: 1.0, thickness: 5, ior: 1.33,
-                side: THREE.DoubleSide, envMapIntensity: 2.0,
-                clearcoat: 1.0, transparent: true, opacity: 0.05
+                color: config.color, metalness: 0.5, roughness: 0, transmission: 1.0, thickness: 5, ior: 1.33, side: THREE.DoubleSide, envMapIntensity: 2.0, clearcoat: 1.0, transparent: true, opacity: 0.05
+            });
+            material.onBeforeCompile = (shader) => { injectSlicing(shader); material.userData.shader = shader; };
+        } else if (config.materialType === 'lines') {
+            material = new THREE.MeshPhysicalMaterial({
+                color: 0x000000, 
+                emissive: 0x000000, 
+                metalness: 0.0, 
+                roughness: 0.4,
+                side: THREE.DoubleSide
             });
             material.onBeforeCompile = (shader) => {
-              injectSlicing(shader);
-              material.userData.shader = shader;
+                injectSlicing(shader);
+                shader.fragmentShader = shader.fragmentShader.replace(
+                    '#include <emissivemap_fragment>',
+                    `
+                    #include <emissivemap_fragment>
+                    
+                    // Contour line logic
+                    float spacing = 10.0;
+                    float linePixelWidth = 1.0; 
+                    float y = vPos.y * 800.0;
+                    float coord = y / spacing;
+                    float f = fwidth(coord);
+                    float dist = abs(fract(coord - 0.5) - 0.5);
+                    float line = smoothstep(f * linePixelWidth, 0.0, dist);
+                    diffuseColor.rgb = vec3(line);
+                    `
+                );
+                material.userData.shader = shader;
             };
-        } else if (config.materialType === 'plaster') {
+        } else { // Default to plaster
             material = new THREE.MeshPhysicalMaterial({
-                color: config.color, 
-                metalness: 0.0, 
-                roughness: 0.8,
-                clearcoat: 0.0, 
-                side: THREE.DoubleSide,
-                dithering: true
+                color: config.color, metalness: 0.0, roughness: 0.8, clearcoat: 0.0, side: THREE.DoubleSide, dithering: true
             });
-             material.onBeforeCompile = (shader) => {
-              injectSlicing(shader);
-              material.userData.shader = shader;
-            };
-        } else {
-            material = new THREE.ShaderMaterial({
-              uniforms: { uColor: { value: new THREE.Color(config.color) }, uSliced: { value: config.slicedMode ? 1.0 : 0.0 } },
-              vertexShader: `varying vec3 vPos; void main() { vPos = position; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }`,
-              fragmentShader: `uniform vec3 uColor; uniform float uSliced; varying vec3 vPos; void main() { 
-                  float line = smoothstep(0.98, 0.999, sin(vPos.y * 200.0));
-                  if (uSliced > 0.5 && line < 0.1) discard;
-                  gl_FragColor = vec4(uColor * line, 1.0); 
-              }`,
-              side: THREE.DoubleSide
-            });
+            material.onBeforeCompile = (shader) => { injectSlicing(shader); material.userData.shader = shader; };
         }
 
         const mesh = new MarchingCubes(config.resolution, material, true, true, 100000);
@@ -730,7 +867,6 @@
         c.mesh = mesh;
       }, [config.resolution, config.color, config.materialType]); 
 
-      // Animation Loop
       useEffect(() => {
         const c = ctx.current;
         if (!c.scene) return;
@@ -738,106 +874,106 @@
         let time = 0;
         const animate = () => {
           c.animId = requestAnimationFrame(animate);
-          time += 0.01 * config.speed;
           
-          if (config.enableVolumeLights && c.volGroup.visible) {
-             c.volGroup.rotation.y = -time * 0.1; // Rotate lights
-          }
+          const cfg = configRef.current;
+          time += 0.01 * cfg.speed;
 
-          // Update Noise Time
-          if (c.noisePass) {
-             c.noisePass.uniforms.uTime.value += 0.05;
+          // Update Caustics
+          if (cfg.enableProjector && cfg.projectorCaustics && c.causticsMaterial) {
+              c.causticsMaterial.uniforms.uTime.value += 0.01 * cfg.speed;
+              c.renderer.setRenderTarget(c.causticsTarget);
+              c.renderer.render(c.causticsScene, c.causticsCamera);
+              c.renderer.setRenderTarget(null);
+              if (c.spotLight) c.spotLight.map = c.causticsTarget.texture;
+          } else if (c.spotLight) {
+              c.spotLight.map = null;
           }
+          
+          if (cfg.enableVolumeLights && c.volGroup.visible) {
+             c.volGroup.rotation.y = -time * 0.1; 
+             c.volGroup.children.forEach(light => { light.intensity = 70.0; });
+          }
+          
+          if (c.bloomPass) c.bloomPass.strength = cfg.bloomStrength;
+          if (c.noisePass) c.noisePass.uniforms.uTime.value += 0.05; 
 
           if (c.mesh) {
             c.mesh.reset();
-            const strength = 1.2 / ((Math.sqrt(config.numBlobs) - 1) / 4 + 1);
-            
-            for (let i = 0; i < config.numBlobs; i++) {
+            let baseStrength = (1.2 / ((Math.sqrt(cfg.numBlobs) - 1) / 4 + 1)) * cfg.blobSize;
+
+            for (let i = 0; i < cfg.numBlobs; i++) {
                 const grp = Math.floor(i / 4), sub = i % 4;
                 const cycle = time * 0.5 + grp;
                 const stage = Math.sin(cycle) + 1; 
-                
                 const range = 0.22;
                 const gx = Math.sin(grp * 13.4 + time * 0.5) * range + 0.5;
                 const gy = Math.cos(grp * 21.6 + time * 0.4) * range + 0.5;
                 const gz = Math.sin(grp * 45.2 + time * 0.6) * range + 0.5;
-
                 const sp1 = THREE.MathUtils.smoothstep(stage, 0.2, 0.8) * 0.12;
                 const sp2 = THREE.MathUtils.smoothstep(stage, 1.2, 1.8) * 0.08;
-                
-                let ox = (sub < 2 ? -sp1 : sp1);
-                let oy = (sub % 2 === 0 ? -sp2 : sp2);
-                
+                let ox = (sub < 2 ? -sp1 : sp1), oy = (sub % 2 === 0 ? -sp2 : sp2);
                 const rot = time * 0.3 + grp, cR = Math.cos(rot), sR = Math.sin(rot);
                 const rx = ox * cR - oy * sR, ry = ox * sR + oy * cR;
-                
-                const wx = Math.sin(time * 2 + i) * 0.02;
-                const wy = Math.cos(time * 2.1 + i) * 0.02;
+                const wx = Math.sin(time * 2 + i) * 0.02, wy = Math.cos(time * 2.1 + i) * 0.02;
 
-                let fx = gx + rx + wx;
-                let fy = gy + ry + wy;
-                let fz = gz + wx;
-                
+                let fx = gx + rx + wx, fy = gy + ry + wy, fz = gz + wx;
                 const margin = 0.25; 
                 fx = Math.max(margin, Math.min(1.0 - margin, fx));
                 fy = Math.max(margin, Math.min(1.0 - margin, fy));
                 fz = Math.max(margin, Math.min(1.0 - margin, fz));
-
-                c.mesh.addBall(fx, fy, fz, strength, 12);
+                c.mesh.addBall(fx, fy, fz, baseStrength, 12);
             }
             
-            if (config.floor) c.mesh.addPlaneY(2, 12);
-            if (config.wallZ) c.mesh.addPlaneZ(2, 12);
-            if (config.wallX) c.mesh.addPlaneX(2, 12);
+            // Note: Floor/Wall planes are boundaries for blob generation
+            if (cfg.floor) c.mesh.addPlaneY(2, 12);
+            if (cfg.wallZ) c.mesh.addPlaneZ(2, 12);
+            if (cfg.wallX) c.mesh.addPlaneX(2, 12);
+
+            if (c.mesh.material.userData.shader) {
+                c.mesh.material.userData.shader.uniforms.uSliced.value = cfg.slicedMode ? 1.0 : 0.0;
+            }
             
-            c.mesh.isolation = config.isolation;
+            c.mesh.isolation = cfg.isolation;
             c.mesh.update();
             c.mesh.rotation.set(Math.sin(time * 0.5) + Math.sin(time * 0.32) * 2, Math.cos(time * 0.4) + Math.sin(time * 0.15) * 2, 0);
-
-            const mat = c.mesh.material;
-            const isSliced = config.slicedMode ? 1.0 : 0.0;
-            if (config.materialType === 'striped') {
-                if (mat.uniforms) {
-                    mat.uniforms.uColor.value.set(config.color);
-                    mat.uniforms.uSliced.value = isSliced;
-                }
-            } else {
-                mat.color.set(config.color);
-                if (mat.userData.shader?.uniforms) mat.userData.shader.uniforms.uSliced.value = isSliced;
-            }
+            c.mesh.material.color.set(cfg.color);
           }
           
-          // Dynamic Floor Collision
           const dist = c.controls.getDistance();
-          const floorHeight = -800;
-          const safeHeight = floorHeight + 20; 
-          
-          if (dist > Math.abs(safeHeight)) {
-             c.controls.maxPolarAngle = Math.acos(safeHeight / dist);
-          } else {
-             c.controls.maxPolarAngle = Math.PI;
-          }
+          const safeHeight = -780; 
+          c.controls.maxPolarAngle = (dist > Math.abs(safeHeight)) ? Math.acos(safeHeight / dist) : Math.PI;
 
           c.controls.update();
           c.composer.render();
+
+          // Throttled camera stats update
+          if (Date.now() - (c.lastStatsUpdate || 0) > 200) {
+             if (setCameraStats) {
+                 setCameraStats({
+                     x: Math.round(c.camera.position.x),
+                     y: Math.round(c.camera.position.y),
+                     z: Math.round(c.camera.position.z),
+                     zoom: Math.round(c.controls.getDistance())
+                 });
+             }
+             c.lastStatsUpdate = Date.now();
+          }
         };
         
         if (!c.animId) animate();
-        return () => {
-            if (c.animId) { cancelAnimationFrame(c.animId); c.animId = null; }
-        };
-      }, [config]);
+        return () => { if (c.animId) { cancelAnimationFrame(c.animId); c.animId = null; } };
+      }, []);
 
       return <div ref={containerRef} className="absolute inset-0 z-10 cursor-move" />;
     };
 
     const App = () => {
       const [config, setConfig] = useState(DEFAULT_CONFIG);
+      const [cameraStats, setCameraStats] = useState({ x: 0, y: -300, z: 2400, zoom: 2400 });
       return (
         <div className="relative w-full h-screen overflow-hidden">
-          <ControlPanel config={config} setConfig={setConfig} />
-          <ThreeScene config={config} />
+          <ControlPanel config={config} setConfig={setConfig} cameraStats={cameraStats} />
+          <ThreeScene config={config} setCameraStats={setCameraStats} />
         </div>
       );
     };
