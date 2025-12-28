@@ -44,7 +44,7 @@
   <script type="text/babel" data-type="module">
     import React, { useState, useEffect, useRef } from 'react';
     import ReactDOM from 'react-dom/client';
-    import { Settings2, RotateCcw, X, Lightbulb, Waves } from 'lucide-react';
+    import { Settings2, RotateCcw, X, Lightbulb, Waves, Smartphone } from 'lucide-react';
     import * as THREE from 'three';
     import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls';
     import { MarchingCubes } from 'three/examples/jsm/objects/MarchingCubes';
@@ -204,7 +204,9 @@
       projectorAngle: 1.4, // Approx 80 degrees
       projectorPenumbra: 0.70,
       projectorHeight: 3000,
-      projectorCaustics: true
+      projectorCaustics: true,
+      // Mobile Settings
+      pixelDoubling: false
     };
 
     const Toggle = ({ label, checked, onChange, icon }) => (
@@ -302,6 +304,24 @@
             </div>
             
             <div className="pb-4">
+              <div className="mb-8">
+                  <button 
+                    onClick={() => setConfig(prev => ({
+                      ...prev, 
+                      pixelDoubling: true,
+                      numBlobs: 35,
+                      speed: 3,
+                      resolution: 40,
+                      enableProjector: false,
+                      enableEnvMap: true
+                    }))}
+                    className="w-full py-3 bg-indigo-600 hover:bg-indigo-500 rounded-xl text-white text-xs font-bold tracking-widest uppercase transition-all shadow-lg shadow-indigo-900/40 flex items-center justify-center gap-2"
+                  >
+                    <Smartphone size={14} />
+                    Mobile Mode
+                  </button>
+              </div>
+
               <div className={sectionClass}>
                 <label className={labelClass}>Material Definition</label>
                 <div className="grid grid-cols-4 gap-2">
@@ -791,6 +811,14 @@
             c.noisePass.uniforms.uOpacity.value = config.noiseOpacity;
             const modeMap = { 'overlay': 0, 'multiply': 1, 'additive': 2, 'softlight': 3 };
             c.noisePass.uniforms.uBlendMode.value = modeMap[config.noiseBlendMode] || 0;
+        }
+
+        // Handle pixel doubling
+        const targetPixelRatio = config.pixelDoubling ? Math.min(window.devicePixelRatio, 2) / 2 : Math.min(window.devicePixelRatio, 2);
+        c.renderer.setPixelRatio(targetPixelRatio);
+        if (c.fxaaPass) {
+             c.fxaaPass.material.uniforms['resolution'].value.x = 1 / (window.innerWidth * targetPixelRatio);
+             c.fxaaPass.material.uniforms['resolution'].value.y = 1 / (window.innerHeight * targetPixelRatio);
         }
 
       }, [config]);
