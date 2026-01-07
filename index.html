@@ -14,11 +14,12 @@
   <style>
     body { margin: 0; overflow: hidden; background-color: #000; color: #e2e8f0; font-family: 'Montserrat', sans-serif; }
     button, input, select, textarea { font-family: inherit; }
-    canvas { display: block; touch-action: none; }
+    canvas { display: block; touch-action: none; outline: none; }
     .scrollbar-hide::-webkit-scrollbar { display: none; }
     .scrollbar-hide { -ms-overflow-style: none; scrollbar-width: none; }
     
     input[type=range] { -webkit-appearance: none; background: transparent; }
+    input[type=range]:focus { outline: none; }
     input[type=range]::-webkit-slider-thumb {
       -webkit-appearance: none; height: 14px; width: 14px; border-radius: 50%;
       background: #ffffff; margin-top: -5px; box-shadow: 0 0 10px rgba(255,255,255,0.5); cursor: pointer;
@@ -75,30 +76,23 @@
         varying vec2 vUv;
         uniform float uTime;
         
-        // Pseudo-random 2D vector
         vec2 hash2(vec2 p) {
             p = vec2(dot(p, vec2(127.1, 311.7)), dot(p, vec2(269.5, 183.3)));
             return fract(sin(p) * 43758.5453);
         }
 
-        // Voronoi noise calculation
         float voronoi(vec2 uv, float t) {
             vec2 n = floor(uv);
             vec2 f = fract(uv);
             float m_dist = 1.0;
             
-            // Iterate through 3x3 neighbor grid
             for(int j=-1; j<=1; j++) {
                 for(int i=-1; i<=1; i++) {
                     vec2 g = vec2(float(i), float(j));
                     vec2 o = hash2(n + g);
-                    
-                    // Animate offset
                     o = 0.5 + 0.5 * sin(t + 6.2831 * o);
-                    
                     vec2 r = g + o - f;
                     float d = dot(r, r);
-                    
                     if(d < m_dist) m_dist = d;
                 }
             }
@@ -109,21 +103,17 @@
             float time = uTime * 0.6;
             vec2 uv = vUv * 6.0;
             
-            // Dual-layer Voronoi for complexity
             float v1 = voronoi(uv, time);
             float v2 = voronoi(uv * 1.2 + vec2(4.0), time * 0.8 + 10.0);
             
-            // Sharpen edges for web-like appearance
             float i1 = smoothstep(0.0, 0.6, v1);
             i1 = pow(i1, 16.0);
             
             float i2 = smoothstep(0.0, 0.6, v2);
             i2 = pow(i2, 16.0);
             
-            // Blend layers and boost intensity
             float intensity = clamp((i1 * 0.6 + i2 * 0.4) * 4.0, 0.0, 1.0);
             
-            // Apply cyan tint and deep blue ambient base
             vec3 waterColor = vec3(0.1, 0.9, 0.9);
             vec3 col = waterColor * intensity;
             col += vec3(0.0, 0.1, 0.2) * 0.1;
@@ -355,7 +345,6 @@
                 </div>
               </div>
 
-              {/* ... (Existing settings) ... */}
               <div className={sectionClass}>
                 <label className={labelClass}>Base Chromaticity</label>
                 <div className="flex items-center gap-3 p-1 pr-3 rounded-xl border border-white/5 bg-white/[0.02]">
@@ -542,6 +531,7 @@
       const containerRef = useRef(null);
       const ctx = useRef({});
       const configRef = useRef(config);
+      const [ready, setReady] = useState(false);
 
       useEffect(() => {
         configRef.current = config;
@@ -569,7 +559,6 @@
         const roomEnv = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
         pmrem.dispose();
 
-        // Model Group (previously used for AR scaling, kept for structure consistency)
         const modelGroup = new THREE.Group();
         scene.add(modelGroup);
 
@@ -594,7 +583,6 @@
         hemiLight.position.set(0, 2000, 0);
         modelGroup.add(hemiLight);
         
-        // Spotlight setup for projection effects
         const spotLight = new THREE.SpotLight(0xffffff, 1000);
         spotLight.position.set(0, 1000, 0);
         spotLight.angle = 0.5;
@@ -609,11 +597,9 @@
         spotLight.shadow.camera.far = 4000;
         spotLight.target.position.set(0, 0, 0);
         
-        // Add spotlight to modelGroup
         modelGroup.add(spotLight);
         modelGroup.add(spotLight.target); 
 
-        // Off-screen scene for generating caustics
         const causticsTarget = new THREE.WebGLRenderTarget(512, 512);
         const causticsScene = new THREE.Scene();
         const causticsCamera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
@@ -626,14 +612,11 @@
         causticsScene.add(causticsQuad);
 
         const volGroup = new THREE.Group();
-        // Add volGroup to modelGroup
         modelGroup.add(volGroup);
 
         const floorGroup = new THREE.Group();
-        // Add floorGroup to modelGroup
         modelGroup.add(floorGroup);
         
-        // Post-processing setup
         const target = new THREE.WebGLRenderTarget(width, height, { type: THREE.HalfFloatType, depthTexture: new THREE.DepthTexture(width, height), samples: 4 });
         const composer = new EffectComposer(renderer, target);
         
@@ -698,20 +681,24 @@
         };
         window.addEventListener('resize', onResize);
 
+        // Mark scene as ready to trigger dependent effects
+        setReady(true);
+
         return () => {
           window.removeEventListener('resize', onResize);
           renderer.dispose();
           containerRef.current?.removeChild(renderer.domElement);
           if (ctx.current.animId) cancelAnimationFrame(ctx.current.animId);
           causticsTarget.dispose();
+          setReady(false);
         };
       }, []);
 
       useEffect(() => {
+        if (!ready) return;
         const c = ctx.current;
         if (!c.floorGroup || !c.scene) return;
 
-        // Reset floor group
         while (c.floorGroup.children.length > 0) {
             const child = c.floorGroup.children[0];
             c.floorGroup.remove(child);
@@ -734,22 +721,21 @@
              groundMirror.rotateX(-Math.PI / 2);
              c.floorGroup.add(groundMirror);
              
-             // High-contrast grid for visual reference
              const grid = new THREE.GridHelper(50000, 500, 0x111111, 0x111111);
              grid.position.y = -799;
              grid.material.transparent = true;
              grid.material.opacity = 0.5;
              c.floorGroup.add(grid);
         }
-      }, [config.floorType]);
+      }, [config.floorType, ready]);
 
       useEffect(() => {
+        if (!ready) return;
         const c = ctx.current;
         if (!c.composer) return;
         
         c.bloomPass.strength = config.bloomStrength;
 
-        // Configure lighting based on material properties
         let ambIntensity = 0;
         let dirIntensity = 0;
         let hemiIntensity = 0;
@@ -770,7 +756,6 @@
             c.bloomPass.radius = isLines ? 0.3 : 0.5;
             c.bloomPass.threshold = isLines ? 1.1 : 0.7; 
         } else {
-            // Glass/Water path
             ambIntensity = config.ambientLightBrightness * 0.01;
             dirIntensity = 0.5;
             hemiIntensity = 0.0;
@@ -804,7 +789,6 @@
             c.volGroup.visible = false;
         }
 
-        // Projector override
         if (config.enableProjector) {
             ambIntensity = 0.0;
             dirIntensity = 0.0;
@@ -844,7 +828,6 @@
             c.noisePass.uniforms.uBlendMode.value = modeMap[config.noiseBlendMode] || 0;
         }
 
-        // Handle pixel doubling
         const targetPixelRatio = config.pixelDoubling ? Math.min(window.devicePixelRatio, 2) / 2 : Math.min(window.devicePixelRatio, 2);
         c.renderer.setPixelRatio(targetPixelRatio);
         if (c.fxaaPass) {
@@ -852,14 +835,15 @@
              c.fxaaPass.material.uniforms['resolution'].value.y = 1 / (window.innerHeight * targetPixelRatio);
         }
 
-      }, [config]);
+      }, [config, ready]);
 
       useEffect(() => {
+        if (!ready) return;
         const c = ctx.current;
         if (!c.scene) return;
 
         if (c.mesh) {
-            c.modelGroup.remove(c.mesh); // Remove from modelGroup
+            c.modelGroup.remove(c.mesh);
             c.mesh.geometry.dispose();
             c.mesh.material.dispose();
         }
@@ -903,7 +887,7 @@
                     side: THREE.DoubleSide
                 });
                 break;
-            default: // plaster default
+            default:
                  material = new THREE.MeshPhysicalMaterial({
                     color: config.color, metalness: 0.0, roughness: 0.8, clearcoat: 0.0, side: THREE.DoubleSide, dithering: true
                 });
@@ -938,22 +922,21 @@
         mesh.enableUvs = false; mesh.enableColors = false;
         mesh.castShadow = true; mesh.receiveShadow = true;
         
-        c.modelGroup.add(mesh); // Add to modelGroup
+        c.modelGroup.add(mesh);
         c.mesh = mesh;
-      }, [config.resolution, config.color, config.materialType]); 
+      }, [config.resolution, config.color, config.materialType, ready]); 
 
       useEffect(() => {
+        if (!ready) return;
         const c = ctx.current;
         if (!c.scene) return;
 
         let time = 0;
         
-        // Use setAnimationLoop for WebXR compatibility
         c.renderer.setAnimationLoop((timestamp, frame) => {
           const cfg = configRef.current;
           time += 0.01 * cfg.speed;
 
-          // Update Caustics
           if (cfg.enableProjector && cfg.projectorCaustics && c.causticsMaterial) {
               c.causticsMaterial.uniforms.uTime.value += 0.01 * cfg.speed;
               c.renderer.setRenderTarget(c.causticsTarget);
@@ -999,7 +982,6 @@
                 c.mesh.addBall(fx, fy, fz, baseStrength, 12);
             }
             
-            // Note: Floor/Wall planes are boundaries for blob generation
             if (cfg.floor) c.mesh.addPlaneY(2, 12);
             if (cfg.wallZ) c.mesh.addPlaneZ(2, 12);
             if (cfg.wallX) c.mesh.addPlaneX(2, 12);
@@ -1021,7 +1003,6 @@
           c.controls.update();
           c.composer.render();
 
-          // Throttled camera stats update
           if (Date.now() - (c.lastStatsUpdate || 0) > 200) {
              if (setCameraStats) {
                  setCameraStats({
@@ -1036,23 +1017,17 @@
         });
         
         return () => { c.renderer.setAnimationLoop(null); };
-      }, []);
+      }, [ready]);
 
       return <div ref={containerRef} className="absolute inset-0 z-10 cursor-move" />;
     };
 
     const App = () => {
-      const [config, setConfig] = useState(DEFAULT_CONFIG);
-      const [cameraStats, setCameraStats] = useState({ x: 0, y: -300, z: 2400, zoom: 2400 });
-      
-      useEffect(() => {
-        // Auto-detect mobile device on mount and apply mobile settings
-        // ONLY detect based on User Agent, not screen width, to prevent low-res mode on resized desktop windows
-        const isMobileDevice = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
-        
-        if (isMobileDevice) {
-            setConfig(prev => ({
-                ...prev,
+      const [config, setConfig] = useState(() => {
+         const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+         if (isMobile) {
+             return {
+                ...DEFAULT_CONFIG,
                 mobileMode: true,
                 pixelDoubling: true,
                 numBlobs: 35,
@@ -1060,9 +1035,11 @@
                 resolution: 40,
                 enableProjector: false,
                 enableEnvMap: true
-            }));
-        }
-      }, []);
+             };
+         }
+         return DEFAULT_CONFIG;
+      });
+      const [cameraStats, setCameraStats] = useState({ x: 0, y: -300, z: 2400, zoom: 2400 });
 
       return (
         <div className="relative w-full h-screen overflow-hidden">
